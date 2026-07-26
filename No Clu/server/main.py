@@ -60,6 +60,10 @@ def _set_session_cookie(request: Request, response: Response, user_id: int) -> N
 PROVIDER = os.getenv("PROVIDER", "gemini").lower().strip()
 TMDB_API_KEY = os.getenv("TMDB_API_KEY", "")
 DEFAULT_COUNTRY = os.getenv("DEFAULT_COUNTRY", "US")
+# iCloud share link of the ready-made "No Clú" Shortcut template. Set this in the
+# host's env once the template is shared; the /shortcut page then offers one-tap
+# install. Left blank => the page falls back to short manual build instructions.
+ICLOUD_SHORTCUT_URL = os.getenv("ICLOUD_SHORTCUT_URL", "").strip()
 
 # --- Provider settings -------------------------------------------------------
 # Gemini: gemini-flash-latest is fast, multimodal, and free-tier friendly (some
@@ -783,6 +787,10 @@ APP_HTML = """<!doctype html>
           font-family:var(--mono);font-size:11px;color:var(--amber-bright);word-break:break-all;line-height:1.5}
   .copybtn{margin-top:10px;width:100%;height:44px;border:none;border-radius:11px;background:var(--amber);color:#1a0f00;
            font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:1px;text-transform:uppercase;cursor:pointer}
+  .setupbtn{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;margin-top:34px;
+            height:52px;border-radius:14px;text-decoration:none;background:rgba(224,165,90,.1);
+            border:1px solid rgba(224,165,90,.4);color:var(--amber-bright);
+            font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:1.5px;text-transform:uppercase}
   .recent{width:100%;margin-top:30px}
   .recent h2{font-family:var(--mono);font-size:10.5px;letter-spacing:2px;color:var(--faint);text-transform:uppercase;margin-bottom:10px}
   .ritem{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(150,140,120,.12)}
@@ -842,12 +850,7 @@ APP_HTML = """<!doctype html>
         <div id="recent"></div>
       </div>
 
-      <div class="connect">
-        <h2>🔗 Connect your one-tap Shortcut</h2>
-        <p>Paste this personal link into your No Clú Shortcut's <b>Get Contents of URL</b> box (replacing the old address). Then every back-tap scan saves here to your history.</p>
-        <div class="urlbox"><span id="shortcutUrl">…</span></div>
-        <button class="copybtn" id="copyBtn" onclick="copyUrl()">Copy my link</button>
-      </div>
+      <a class="setupbtn" href="/shortcut">⚡ Set up one-tap scanning</a>
     </main>
   </div>
 <script>
@@ -883,11 +886,8 @@ APP_HTML = """<!doctype html>
     document.getElementById('gate').classList.add('show');
     document.getElementById('app').classList.remove('show');
   }
-  var shortcutLink='';
-  function showApp(name, shortcutUrl){
+  function showApp(name){
     document.getElementById('whoName').textContent=name||'';
-    shortcutLink=shortcutUrl||'';
-    document.getElementById('shortcutUrl').textContent=shortcutLink||'(sign in to get your link)';
     document.getElementById('gate').classList.remove('show');
     document.getElementById('app').classList.add('show');
     loadHistory();
@@ -895,20 +895,8 @@ APP_HTML = """<!doctype html>
   async function checkAuth(){
     try{
       var r=await fetch('/auth/me'); var d=await r.json();
-      if(d.signed_in){ showApp(d.name, d.shortcut_url); } else { showGate(); }
+      if(d.signed_in){ showApp(d.name); } else { showGate(); }
     }catch(e){ showGate(); }
-  }
-  function copyUrl(){
-    var btn=document.getElementById('copyBtn');
-    if(!shortcutLink) return;
-    function done(){ btn.textContent='Copied ✓'; setTimeout(function(){ btn.textContent='Copy my link'; },1800); }
-    if(navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(shortcutLink).then(done, function(){ fallbackCopy(); });
-    } else { fallbackCopy(); }
-    function fallbackCopy(){
-      var t=document.createElement('textarea'); t.value=shortcutLink; document.body.appendChild(t);
-      t.select(); try{ document.execCommand('copy'); }catch(e){} document.body.removeChild(t); done();
-    }
   }
 
   async function loadHistory(){
@@ -992,6 +980,133 @@ APP_HTML = """<!doctype html>
 
   setMode('login');
   checkAuth();
+</script>
+</body>
+</html>"""
+
+
+SHORTCUT_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="No Clu">
+<link rel="apple-touch-icon" href="/app-icon.png">
+<link rel="icon" href="/app-icon.png">
+<title>Set up one-tap scanning · No Clú</title>
+<style>
+  :root{
+    --bg:#000; --card:#0D0B08; --ink:#F4F1EA; --muted:#9a8f7d; --faint:#6a6152;
+    --amber:#E0A55A; --amber-bright:#F2C784;
+    --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans: -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100dvh;
+       padding:calc(env(safe-area-inset-top) + 18px) 22px calc(env(safe-area-inset-bottom) + 40px);
+       -webkit-font-smoothing:antialiased;max-width:520px;margin:0 auto}
+  a.back{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--muted);text-decoration:none}
+  .brand{font-family:var(--mono);font-weight:700;letter-spacing:3px;color:var(--amber);
+         text-shadow:0 0 14px rgba(224,165,90,.5);font-size:15px;margin:18px 0 4px}
+  h1{font-size:25px;line-height:1.25;margin-top:8px}
+  .sub{color:var(--muted);font-size:14px;line-height:1.55;margin-top:10px}
+  .step{background:var(--card);border:1px solid rgba(224,165,90,.2);border-radius:16px;padding:18px;margin-top:18px}
+  .step .n{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--amber-bright);text-transform:uppercase}
+  .step h2{font-size:17px;margin-top:6px}
+  .step p{color:var(--muted);font-size:13.5px;line-height:1.55;margin-top:8px}
+  .step p b{color:var(--ink)}
+  .urlbox{background:rgba(0,0,0,.45);border:1px solid rgba(224,165,90,.18);border-radius:10px;padding:11px 12px;
+          font-family:var(--mono);font-size:11px;color:var(--amber-bright);word-break:break-all;line-height:1.5;margin-top:12px}
+  .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:50px;margin-top:12px;
+       border:none;border-radius:12px;background:var(--amber);color:#1a0f00;cursor:pointer;text-decoration:none;
+       font-family:var(--mono);font-weight:700;font-size:12.5px;letter-spacing:1px;text-transform:uppercase}
+  .btn.ghost{background:rgba(224,165,90,.1);border:1px solid rgba(224,165,90,.4);color:var(--amber-bright)}
+  ol.manual{margin:12px 0 0 18px;color:var(--muted);font-size:13.5px;line-height:1.7}
+  ol.manual b{color:var(--ink)}
+  code{font-family:var(--mono);font-size:12px;background:rgba(224,165,90,.12);color:var(--amber-bright);
+       padding:2px 6px;border-radius:5px;word-break:break-all}
+  #need,#setup{display:none}
+  #need.show,#setup.show{display:block}
+  #need{text-align:center;padding-top:60px}
+</style>
+</head>
+<body>
+  <a class="back" href="/app">← Back to app</a>
+
+  <div id="need">
+    <div class="brand">No Clú</div>
+    <h1>Please sign in first</h1>
+    <p class="sub">Open the app, sign in, then come back here to set up one-tap scanning.</p>
+    <a class="btn" href="/app" style="max-width:260px;margin:22px auto 0">Go to sign in</a>
+  </div>
+
+  <div id="setup">
+    <div class="brand">No Clú</div>
+    <h1>One-tap scanning</h1>
+    <p class="sub">Add a Shortcut to your iPhone so a single tap identifies whatever you're watching — and saves it to your history here. Two quick steps.</p>
+
+    <div class="step">
+      <div class="n">Step 1</div>
+      <h2>Copy your personal link</h2>
+      <p>This link is unique to <b id="who">you</b> — it's what ties scans to your account.</p>
+      <div class="urlbox"><span id="link">…</span></div>
+      <button class="btn" id="copyBtn" onclick="copyLink()">Copy my link</button>
+    </div>
+
+    <div class="step" id="addStep">
+      <div class="n">Step 2</div>
+      <h2 id="addTitle">Add the ready-made Shortcut</h2>
+      <div id="oneTap">
+        <p>Tap the button below. iPhone will open Shortcuts and ask you to <b>paste your personal link</b> — press and hold, then <b>Paste</b> (it's already copied from Step 1). Tap <b>Add Shortcut</b>. Done!</p>
+        <a class="btn" id="addBtn" href="__ICLOUD_URL__">＋ Add the No Clú Shortcut</a>
+        <p style="margin-top:14px">Then bind it to your <b>Action Button</b> or <b>Back Tap</b> (Settings → Accessibility → Touch → Back Tap) so one tap scans instantly.</p>
+      </div>
+      <div id="manual" style="display:none">
+        <p>Build a tiny Shortcut once (takes a minute):</p>
+        <ol class="manual">
+          <li>Open the <b>Shortcuts</b> app → <b>+</b> to create a new one.</li>
+          <li>Add action <b>Take Screenshot</b>.</li>
+          <li>Add action <b>Get Contents of URL</b>. Set URL to your copied link, tap <b>Show More</b>: Method <b>POST</b>, Request Body <b>File</b>, and choose the <b>Screenshot</b> variable.</li>
+          <li>Add action <b>Show Result</b> (or Quick Look).</li>
+          <li>Name it <b>No Clú</b>, then bind it to your <b>Action Button</b> or <b>Back Tap</b>.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+<script>
+  var ICLOUD = "__ICLOUD_URL__";
+  var myLink = "";
+  async function init(){
+    try{
+      var r = await fetch('/auth/me'); var d = await r.json();
+      if(!d.signed_in){ document.getElementById('need').classList.add('show'); return; }
+      myLink = d.shortcut_url || "";
+      document.getElementById('who').textContent = d.name || "you";
+      document.getElementById('link').textContent = myLink || "(sign in to get your link)";
+      // If no ready-made Shortcut is configured, show manual build steps instead.
+      if(!ICLOUD){
+        document.getElementById('oneTap').style.display='none';
+        document.getElementById('manual').style.display='block';
+        document.getElementById('addTitle').textContent='Build the Shortcut';
+      }
+      document.getElementById('setup').classList.add('show');
+    }catch(e){ document.getElementById('need').classList.add('show'); }
+  }
+  function copyLink(){
+    var btn=document.getElementById('copyBtn');
+    if(!myLink) return;
+    function done(){ btn.textContent='Copied ✓ — now tap Step 2'; setTimeout(function(){ btn.textContent='Copy my link'; },2600); }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(myLink).then(done, fallback);
+    } else { fallback(); }
+    function fallback(){
+      var t=document.createElement('textarea'); t.value=myLink; document.body.appendChild(t);
+      t.select(); try{ document.execCommand('copy'); }catch(e){} document.body.removeChild(t); done();
+    }
+  }
+  init();
 </script>
 </body>
 </html>"""
@@ -1095,6 +1210,13 @@ async def history(request: Request):
 @app.get("/app", response_class=HTMLResponse)
 async def app_page():
     return APP_HTML
+
+
+@app.get("/shortcut", response_class=HTMLResponse)
+async def shortcut_page():
+    """Setup sub-page: gives the signed-in user their personal scan link and,
+    when ICLOUD_SHORTCUT_URL is configured, a one-tap install of the template."""
+    return SHORTCUT_HTML.replace("__ICLOUD_URL__", ICLOUD_SHORTCUT_URL)
 
 
 @app.get("/app-icon.png")
