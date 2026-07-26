@@ -70,7 +70,7 @@ ICLOUD_SHORTCUT_URL = os.getenv("ICLOUD_SHORTCUT_URL", "").strip()
 # accounts have zero free quota on the pinned gemini-2.0-flash, so "latest" is a
 # safer default). Get a key (no card) at https://aistudio.google.com/apikey
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
 # Anthropic: claude-opus-4-8 is the most accurate; claude-haiku-4-5 the fastest.
 ANTHROPIC_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
 
@@ -720,7 +720,6 @@ APP_HTML = """<!doctype html>
   #gate{flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;padding:30px 24px}
   #gate.show{display:flex}
   #gate .brand{font-size:34px;margin-bottom:6px}
-  #gate .tag{color:var(--muted);font-size:14px;margin-bottom:30px;text-align:center}
   .authcard{width:100%;max-width:360px;background:var(--card);border:1px solid rgba(224,165,90,.2);border-radius:18px;padding:22px}
   .seg{display:flex;background:rgba(255,255,255,.04);border-radius:12px;padding:4px;margin-bottom:18px}
   .seg button{flex:1;font-family:var(--mono);font-size:12px;letter-spacing:1px;text-transform:uppercase;
@@ -761,7 +760,6 @@ APP_HTML = """<!doctype html>
   .pupil{width:54px;height:54px;border-radius:16px;transform:rotate(45deg);
          background:radial-gradient(circle at 36% 32%,var(--amber-bright),var(--amber) 70%);animation:coreGlow 2.4s ease-in-out infinite}
   .stage.scan .pupil{animation:none;background:radial-gradient(circle at 36% 32%,#fff,var(--amber-bright) 70%)}
-  .hint{margin-top:24px;color:var(--faint);font-size:13.5px;text-align:center;max-width:280px;line-height:1.5}
   #file{display:none}
   .card{width:100%;margin-top:26px;background:var(--card);border:1px solid rgba(224,165,90,.22);border-radius:18px;overflow:hidden;
         animation:fadeUp .5s ease-out;display:none}
@@ -791,6 +789,21 @@ APP_HTML = """<!doctype html>
             height:52px;border-radius:14px;text-decoration:none;background:rgba(224,165,90,.1);
             border:1px solid rgba(224,165,90,.4);color:var(--amber-bright);
             font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:1.5px;text-transform:uppercase}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.78);display:none;
+         align-items:center;justify-content:center;padding:28px;z-index:50}
+  .modal.show{display:flex}
+  .modal .box{background:var(--card);border:1px solid rgba(224,165,90,.3);border-radius:18px;
+              padding:24px;max-width:340px;text-align:center;animation:fadeUp .35s ease-out}
+  .modal h3{font-size:18px;margin-bottom:10px}
+  .modal p{color:var(--muted);font-size:14px;line-height:1.55}
+  .modal button{margin-top:20px;width:100%;height:46px;border:none;border-radius:12px;
+                background:var(--amber);color:#1a0f00;font-family:var(--mono);font-weight:700;
+                font-size:12px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer}
+  .seeall{display:block;margin-top:12px;text-align:center;text-decoration:none;
+          font-family:var(--mono);font-size:11px;letter-spacing:1.5px;
+          color:var(--amber-bright);text-transform:uppercase}
+  .ritem{text-decoration:none;color:inherit}
+  .ritem .go{color:var(--amber);font-size:17px}
   .recent{width:100%;margin-top:30px}
   .recent h2{font-family:var(--mono);font-size:10.5px;letter-spacing:2px;color:var(--faint);text-transform:uppercase;margin-bottom:10px}
   .ritem{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(150,140,120,.12)}
@@ -804,7 +817,6 @@ APP_HTML = """<!doctype html>
   <!-- Sign-in gate -->
   <div id="gate">
     <div class="brand">No Clú</div>
-    <div class="tag">Sign in so your scans follow you to every device.</div>
     <div class="authcard">
       <div class="seg">
         <button id="segLogin" class="on" onclick="setMode('login')">Sign in</button>
@@ -832,7 +844,6 @@ APP_HTML = """<!doctype html>
         <div class="pulse" id="pulse"></div>
         <div class="lens" id="lens"><div class="pupil"></div></div>
       </div>
-      <div class="hint">Tap the lens, then take a photo or pick a screenshot of what you're watching.</div>
       <input type="file" id="file" accept="image/*">
       <div class="card" id="card">
         <img class="poster" id="poster" alt="">
@@ -846,12 +857,20 @@ APP_HTML = """<!doctype html>
         </div>
       </div>
       <div class="recent" id="recentWrap" style="display:none">
-        <h2>Your scan history</h2>
+        <h2>Recent scans</h2>
         <div id="recent"></div>
+        <a class="seeall" href="/history">See all →</a>
       </div>
 
       <a class="setupbtn" href="/shortcut">⚡ Set up one-tap scanning</a>
     </main>
+    <div class="modal" id="syncModal">
+      <div class="box">
+        <h3>Your scans are saved to your account</h3>
+        <p>Everything you scan is stored here and available on any device you sign in from.</p>
+        <button onclick="closeSyncPopup()">Got it</button>
+      </div>
+    </div>
   </div>
 <script>
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
@@ -872,7 +891,7 @@ APP_HTML = """<!doctype html>
     try{
       var r=await fetch('/auth/'+(mode==='login'?'login':'register'),{method:'POST',body:fd});
       var d=await r.json();
-      if(d.ok){ await checkAuth(); }
+      if(d.ok){ await checkAuth(true); }
       else { err.textContent=d.error||'Something went wrong.'; }
     }catch(e){ err.textContent='Could not reach the server.'; }
     btn.disabled=false;
@@ -892,24 +911,34 @@ APP_HTML = """<!doctype html>
     document.getElementById('app').classList.add('show');
     loadHistory();
   }
-  async function checkAuth(){
+  function showSyncPopup(){ document.getElementById('syncModal').classList.add('show'); }
+  function closeSyncPopup(){ document.getElementById('syncModal').classList.remove('show'); }
+  async function checkAuth(justSignedIn){
     try{
       var r=await fetch('/auth/me'); var d=await r.json();
-      if(d.signed_in){ showApp(d.name); } else { showGate(); }
+      if(d.signed_in){
+        showApp(d.name);
+        // Only after an explicit sign-in — not every time the app reopens.
+        if(justSignedIn) showSyncPopup();
+      } else { showGate(); }
     }catch(e){ showGate(); }
   }
 
   async function loadHistory(){
     try{
-      var r=await fetch('/history'); if(r.status!==200) return;
+      var r=await fetch('/api/history?limit=3'); if(r.status!==200) return;
       var d=await r.json(); var list=d.scans||[];
       if(!list.length){ document.getElementById('recentWrap').style.display='none'; return; }
       document.getElementById('recentWrap').style.display='block';
       document.getElementById('recent').innerHTML=list.map(function(s){
-        var thumb=s.poster?('<img class="rth" src="'+esc(s.poster)+'">'):'<div class="rth"></div>';
-        var m=[(s.type||'').replace('_',' ')]; if(s.year) m.push(s.year);
-        return '<div class="ritem">'+thumb+'<div class="rmain"><div class="rt">'+esc(s.title)+
-               '</div><div class="rm">'+esc(m.filter(Boolean).join(' · '))+'</div></div></div>';
+        var thumb=s.poster?('<img class="rth" src="'+esc(s.poster)+'" onerror="this.outerHTML=\\'<div class=rth></div>\\'">'):'<div class="rth"></div>';
+        var m=[(s.type||'').replace('_',' ')];
+        if(s.year) m.push(s.year);
+        if(s.season && s.episode) m.push('S'+s.season+' · E'+s.episode);
+        return '<a class="ritem" href="/title/'+s.id+'">'+thumb+
+               '<div class="rmain"><div class="rt">'+esc(s.title)+
+               '</div><div class="rm">'+esc(m.filter(Boolean).join(' · '))+
+               '</div></div><div class="go">›</div></a>';
       }).join('');
     }catch(e){}
   }
@@ -1112,6 +1141,176 @@ SHORTCUT_HTML = """<!doctype html>
 </html>"""
 
 
+HISTORY_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="/app-icon.png">
+<link rel="icon" href="/app-icon.png">
+<title>Your scan history · No Clú</title>
+<style>
+  :root{--bg:#000;--card:#0D0B08;--ink:#F4F1EA;--muted:#9a8f7d;--faint:#6a6152;
+        --amber:#E0A55A;--amber-bright:#F2C784;
+        --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+        --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100dvh;
+       padding:calc(env(safe-area-inset-top) + 18px) 22px calc(env(safe-area-inset-bottom) + 40px);
+       -webkit-font-smoothing:antialiased;max-width:560px;margin:0 auto}
+  a.back{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--muted);text-decoration:none}
+  h1{font-size:24px;margin:18px 0 4px}
+  .sub{color:var(--muted);font-size:13.5px;margin-bottom:18px}
+  .row{display:flex;align-items:center;gap:13px;padding:11px 0;text-decoration:none;color:inherit;
+       border-bottom:1px solid rgba(150,140,120,.12)}
+  .row .th{width:42px;height:60px;border-radius:6px;object-fit:cover;background:rgba(224,165,90,.1);flex-shrink:0}
+  .row .main{flex:1;min-width:0}
+  .row .t{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .m{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:3px}
+  .row .go{color:var(--amber);font-size:18px}
+  .empty{color:var(--faint);font-size:14px;text-align:center;padding:50px 0}
+</style>
+</head>
+<body>
+  <a class="back" href="/app">← Back to app</a>
+  <h1>Your scan history</h1>
+  <div class="sub" id="count"></div>
+  <div id="list"></div>
+<script>
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function meta(s){
+    var bits=[];
+    if(s.type) bits.push(String(s.type).replace('_',' '));
+    if(s.year) bits.push(s.year);
+    if(s.season && s.episode) bits.push('S'+s.season+' · E'+s.episode);
+    return bits.join('  ·  ');
+  }
+  async function load(){
+    var r;
+    try{ r=await fetch('/api/history?limit=100'); }catch(e){ return; }
+    if(r.status===401){ location.href='/app'; return; }
+    if(r.status!==200){
+      document.getElementById('count').textContent='';
+      document.getElementById('list').innerHTML='<div class="empty">Couldn\\'t load your history.</div>';
+      return;
+    }
+    var d=await r.json(), list=d.scans||[];
+    document.getElementById('count').textContent = !list.length ? '' :
+      (list.length>=100 ? '100+ scans' : list.length+' scan'+(list.length===1?'':'s'));
+    if(!list.length){
+      document.getElementById('list').innerHTML='<div class="empty">No scans yet.</div>';
+      return;
+    }
+    document.getElementById('list').innerHTML=list.map(function(s){
+      var thumb=s.poster?('<img class="th" src="'+esc(s.poster)+'" onerror="this.outerHTML=\\'<div class=th></div>\\'">'):'<div class="th"></div>';
+      return '<a class="row" href="/title/'+s.id+'">'+thumb+
+             '<div class="main"><div class="t">'+esc(s.title)+'</div>'+
+             '<div class="m">'+esc(meta(s))+'</div></div><div class="go">›</div></a>';
+    }).join('');
+  }
+  load();
+</script>
+</body>
+</html>"""
+
+
+TITLE_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="/app-icon.png">
+<link rel="icon" href="/app-icon.png">
+<title>No Clú</title>
+<style>
+  :root{--bg:#000;--card:#0D0B08;--ink:#F4F1EA;--muted:#9a8f7d;--faint:#6a6152;
+        --amber:#E0A55A;--amber-bright:#F2C784;
+        --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+        --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100dvh;
+       padding:calc(env(safe-area-inset-top) + 18px) 22px calc(env(safe-area-inset-bottom) + 40px);
+       -webkit-font-smoothing:antialiased;max-width:520px;margin:0 auto}
+  a.back{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--muted);text-decoration:none}
+  .cover{width:100%;border-radius:16px;margin-top:16px;display:none;
+         border:1px solid rgba(224,165,90,.18)}
+  h1{font-size:27px;line-height:1.2;margin-top:18px}
+  .meta{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--muted);
+        margin-top:8px;text-transform:uppercase}
+  .detail{color:#cbb89a;font-size:14.5px;line-height:1.55;margin-top:14px}
+  .label{font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;color:var(--faint);
+         text-transform:uppercase;margin-top:26px}
+  .chips{display:flex;flex-wrap:wrap;gap:9px;margin-top:11px}
+  .chips a{font-family:var(--mono);font-size:11.5px;letter-spacing:.5px;text-decoration:none;
+           padding:10px 14px;border-radius:22px;border:1px solid rgba(224,165,90,.35);
+           color:var(--amber-bright);background:rgba(224,165,90,.07)}
+  .cta{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:16px;
+       text-decoration:none;height:52px;border-radius:13px;background:var(--amber);color:#1a0f00;
+       font-family:var(--mono);font-weight:700;font-size:12.5px;letter-spacing:1.5px;text-transform:uppercase}
+  .msg{color:var(--faint);font-size:14px;text-align:center;padding:60px 0}
+</style>
+</head>
+<body>
+  <a class="back" href="/history">← Back to history</a>
+  <div id="msg" class="msg">Loading…</div>
+  <div id="body" style="display:none">
+    <img class="cover" id="cover" alt="">
+    <h1 id="ttl"></h1>
+    <div class="meta" id="meta"></div>
+    <div class="detail" id="detail"></div>
+    <div class="label" id="label" style="display:none"></div>
+    <div class="chips" id="chips"></div>
+    <a class="cta" id="cta" target="_blank" rel="noopener" style="display:none"></a>
+  </div>
+<script>
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  async function load(){
+    var id = location.pathname.split('/').pop();
+    var r;
+    try{ r=await fetch('/api/title/'+encodeURIComponent(id)); }
+    catch(e){ document.getElementById('msg').textContent='Could not reach the server.'; return; }
+    if(r.status===401){ location.href='/app'; return; }
+    if(r.status!==200){ document.getElementById('msg').textContent='Scan not found.'; return; }
+    var d=await r.json();
+    document.title = d.title ? (d.title+' · No Clú') : 'No Clú';
+    if(d.poster){
+      var c=document.getElementById('cover');
+      c.onerror=function(){ c.style.display='none'; };
+      c.src=d.poster; c.style.display='block';
+    }
+    document.getElementById('ttl').textContent=d.title||'Unknown';
+    var bits=[];
+    if(d.type) bits.push(String(d.type).replace('_',' '));
+    if(d.year) bits.push(d.year);
+    if(d.season && d.episode) bits.push('S'+d.season+' · E'+d.episode);
+    document.getElementById('meta').textContent=bits.join('  ·  ');
+    document.getElementById('detail').textContent=d.detail||'';
+    var provs=d.providers||[], label=document.getElementById('label');
+    if(provs.length){
+      label.textContent='Watch in '+(d.country||''); label.style.display='block';
+      document.getElementById('chips').innerHTML=provs.map(function(p){
+        return '<a href="'+esc(p.url)+'" target="_blank" rel="noopener">'+esc(p.name)+'</a>';
+      }).join('');
+    }
+    if(d.justwatch){
+      var cta=document.getElementById('cta');
+      cta.href=d.justwatch;
+      cta.textContent = provs.length ? 'See all options' : ('▶ Where to watch in '+(d.country||''));
+      cta.style.display='flex';
+    }
+    document.getElementById('msg').style.display='none';
+    document.getElementById('body').style.display='block';
+  }
+  load();
+</script>
+</body>
+</html>"""
+
+
 # --- Accounts (email/phone + password; Google added after hosting) -----------
 def _identifier_kind(identifier: str):
     """Classify a login identifier as ('email'|'phone', normalized) or (None, None)."""
@@ -1189,22 +1388,97 @@ async def auth_me(request: Request):
         session.close()
 
 
-@app.get("/history")
-async def history(request: Request):
+HISTORY_LIMIT_DEFAULT = 30
+HISTORY_LIMIT_MAX = 100
+
+
+def _clamp_limit(value: Optional[int], default: int = HISTORY_LIMIT_DEFAULT) -> int:
+    """A sane row count, whatever the query string contained."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(n, HISTORY_LIMIT_MAX))
+
+
+def _scan_to_dict(scan) -> dict:
+    """One stored scan as JSON. `id` is what makes a row tappable."""
+    return {
+        "id": scan.id,
+        "title": scan.title,
+        "type": scan.content_type,
+        "year": scan.year,
+        "season": scan.season,
+        "episode": scan.episode,
+        "poster": scan.poster,
+        "detail": scan.detail,
+        "at": scan.scanned_at.isoformat() if scan.scanned_at else None,
+    }
+
+
+async def watch_options(content: ScreenContent, country: str) -> dict:
+    """Where to watch, as tappable chips plus a JustWatch catch-all.
+
+    Never raises: a detail page must still render its cover and description
+    when availability lookup fails.
+    """
+    providers = []
+    try:
+        watch = await tmdb_where_to_watch(content, country)
+        if watch:
+            seen = set()
+            for key in ("stream", "rent", "buy"):
+                for name in watch.get(key) or []:
+                    if name not in seen:
+                        seen.add(name)
+                        providers.append({"name": name,
+                                          "url": provider_link(name, content.title, country)})
+    except Exception:
+        providers = []
+    try:
+        jw = justwatch_url(content, country)
+    except Exception:
+        jw = None
+    return {"providers": providers, "justwatch": jw}
+
+
+@app.get("/api/history")
+async def api_history(request: Request, limit: Optional[int] = None):
     uid = current_user_id(request)
     if uid is None:
         return JSONResponse({"error": "not signed in"}, status_code=401)
     session = db.SessionLocal()
     try:
-        scans = db.recent_scans(session, uid)
-        return {"scans": [
-            {"title": s.title, "type": s.content_type, "year": s.year,
-             "poster": s.poster, "detail": s.detail,
-             "at": s.scanned_at.isoformat() if s.scanned_at else None}
-            for s in scans
-        ]}
+        scans = db.recent_scans(session, uid, limit=_clamp_limit(limit))
+        return {"scans": [_scan_to_dict(s) for s in scans]}
     finally:
         session.close()
+
+
+@app.get("/api/title/{scan_id}")
+async def api_title(request: Request, scan_id: int):
+    uid = current_user_id(request)
+    if uid is None:
+        return JSONResponse({"error": "not signed in"}, status_code=401)
+    session = db.SessionLocal()
+    try:
+        scan = db.get_scan_for_user(session, scan_id, uid)
+        if scan is None:
+            # 404 (not 403) so scan ids can't be probed for existence.
+            return JSONResponse({"error": "not found"}, status_code=404)
+        data = _scan_to_dict(scan)
+    finally:
+        session.close()
+
+    country = await resolve_country(request, None)
+    content = ScreenContent(
+        content_type=data["type"] or "other", title=data["title"],
+        year=data["year"], season=data["season"], episode=data["episode"],
+        confidence="high", detail=data["detail"] or "",
+    )
+    data["country"] = country
+    data.update(await watch_options(content, country))
+    return data
 
 
 @app.get("/app", response_class=HTMLResponse)
@@ -1217,6 +1491,16 @@ async def shortcut_page():
     """Setup sub-page: gives the signed-in user their personal scan link and,
     when ICLOUD_SHORTCUT_URL is configured, a one-tap install of the template."""
     return SHORTCUT_HTML.replace("__ICLOUD_URL__", ICLOUD_SHORTCUT_URL)
+
+
+@app.get("/history", response_class=HTMLResponse)
+async def history_page():
+    return HISTORY_HTML
+
+
+@app.get("/title/{scan_id}", response_class=HTMLResponse)
+async def title_page(scan_id: int):
+    return TITLE_HTML
 
 
 @app.get("/app-icon.png")
@@ -1282,7 +1566,8 @@ async def identify(request: Request, image: UploadFile = File(...), country: Opt
             session = db.SessionLocal()
             try:
                 db.add_scan(session, uid, title=content.title, content_type=content.content_type,
-                            year=content.year, poster=poster, detail=content.detail)
+                            year=content.year, poster=poster, detail=content.detail,
+                            season=content.season, episode=content.episode)
             finally:
                 session.close()
         except Exception:
@@ -1372,7 +1657,8 @@ async def scan_text(request: Request, country: Optional[str] = None, token: Opti
                     poster = await fetch_poster(content)
                     db.add_scan(session, user.id, title=content.title,
                                 content_type=content.content_type, year=content.year,
-                                poster=poster, detail=content.detail)
+                                poster=poster, detail=content.detail,
+                                season=content.season, episode=content.episode)
             finally:
                 session.close()
         except Exception:
