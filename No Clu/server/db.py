@@ -11,8 +11,10 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, String, Text, create_engine, select,
+    Column, DateTime, ForeignKey, Integer, String, Text, create_engine, inspect,
+    select, text,
 )
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 Base = declarative_base()
@@ -56,6 +58,8 @@ class Scan(Base):
     title = Column(String(500), nullable=False)
     content_type = Column(String(40), nullable=True)
     year = Column(Integer, nullable=True)
+    season = Column(Integer, nullable=True)
+    episode = Column(Integer, nullable=True)
     poster = Column(Text, nullable=True)
     detail = Column(Text, nullable=True)
     scanned_at = Column(DateTime, default=datetime.utcnow)
@@ -71,9 +75,47 @@ _engine = create_engine(
 SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
 
 
+def ensure_scan_columns(engine=None) -> None:
+    """Add nullable season/episode columns to an existing `scans` table.
+
+    SQLAlchemy's create_all() creates missing TABLES but never missing COLUMNS,
+    so a table created before these columns existed needs an explicit ALTER.
+    Adding a nullable column is additive: no rewrite, no data loss, no downtime.
+    Safe to call on every startup.
+
+    The inspector pre-check is a fast path, not a lock: under multiple
+    concurrent workers (e.g. `uvicorn --workers N` against Postgres), two
+    processes can both see a column missing and both attempt the ALTER. The
+    loser gets a "column already exists" / "duplicate column" error even
+    though the end state -- the column existing -- is exactly what we want,
+    so that specific error is swallowed. Any other error (e.g. permissions)
+    still surfaces. Each column gets its own `engine.begin()` so one column's
+    failure can't poison the other's transaction.
+    """
+    engine = engine or _engine
+    inspector = inspect(engine)
+    if "scans" not in inspector.get_table_names():
+        return  # create_all() will build it complete
+    existing = {col["name"] for col in inspector.get_columns("scans")}
+    for name in ("season", "episode"):
+        if name in existing:
+            continue
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE scans ADD COLUMN {name} INTEGER"))
+        except (OperationalError, ProgrammingError) as exc:
+            message = str(exc).lower()
+            if "already exists" in message or "duplicate column" in message:
+                # Lost a race with a concurrent worker adding the same
+                # column. The column exists either way -- nothing to do.
+                continue
+            raise
+
+
 def init_db() -> None:
     """Create tables if they don't exist. Safe to call on every startup."""
     Base.metadata.create_all(_engine)
+    ensure_scan_columns(_engine)
 
 
 # --- User helpers ------------------------------------------------------------
@@ -124,12 +166,24 @@ def ensure_scan_token(db, user: User) -> str:
 
 # --- Scan helpers ------------------------------------------------------------
 def add_scan(db, user_id: int, *, title, content_type=None, year=None,
-             poster=None, detail=None) -> Scan:
+             poster=None, detail=None, season=None, episode=None) -> Scan:
     scan = Scan(user_id=user_id, title=title, content_type=content_type,
-                year=year, poster=poster, detail=detail)
+                year=year, poster=poster, detail=detail,
+                season=season, episode=episode)
     db.add(scan)
     db.commit()
     return scan
+
+
+def get_scan_for_user(db, scan_id: int, user_id: int) -> Optional[Scan]:
+    """One scan, but only if it belongs to this user.
+
+    Scoping the query by user_id (rather than fetching then comparing) means a
+    caller cannot accidentally leak another account's scan by forgetting a check.
+    """
+    return db.scalar(
+        select(Scan).where(Scan.id == scan_id, Scan.user_id == user_id)
+    )
 
 
 def recent_scans(db, user_id: int, limit: int = 30) -> List[Scan]:
