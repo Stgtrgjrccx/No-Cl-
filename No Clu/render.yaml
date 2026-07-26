@@ -1,0 +1,27 @@
+# Render Blueprint — one-click free hosting for No Clú.
+# Render reads this file automatically when you create a "Blueprint" service
+# from the GitHub repo. Everything below is on Render's free plan (no card).
+#
+# Two secrets you paste in the dashboard after the first deploy:
+#   GEMINI_API_KEY  – your free Google AI Studio key
+#   DATABASE_URL    – the free Postgres connection string from Neon
+# SESSION_SECRET is generated for you; the rest have safe defaults.
+services:
+  - type: web
+    name: no-clu
+    runtime: python
+    plan: free
+    rootDir: server
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: SESSION_SECRET
+        generateValue: true      # Render makes a strong random value for you
+      - key: DEFAULT_COUNTRY
+        value: IN
+      - key: GEMINI_API_KEY
+        sync: false              # paste your free key in the dashboard (kept secret)
+      - key: DATABASE_URL
+        sync: false              # paste the Neon Postgres URL in the dashboard
