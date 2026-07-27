@@ -64,6 +64,12 @@ DEFAULT_COUNTRY = os.getenv("DEFAULT_COUNTRY", "US")
 # host's env once the template is shared; the /shortcut page then offers one-tap
 # install. Left blank => the page falls back to short manual build instructions.
 ICLOUD_SHORTCUT_URL = os.getenv("ICLOUD_SHORTCUT_URL", "").strip()
+# Social sign-in appears only once its credentials exist, so the sign-in screen
+# never shows a button that cannot work. Email + password always works.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "").strip()
+# Trailing label on the Shortcut's reply; its URL is what the Shortcut opens.
+SCAN_APP_LINK_LABEL = "📱 Open in No Clú"
 
 # --- Provider settings -------------------------------------------------------
 # Gemini: gemini-flash-latest is fast, multimodal, and free-tier friendly (some
@@ -798,6 +804,15 @@ APP_HTML = """<!doctype html>
             height:52px;border-radius:14px;text-decoration:none;background:rgba(224,165,90,.1);
             border:1px solid rgba(224,165,90,.4);color:var(--amber-bright);
             font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:1.5px;text-transform:uppercase}
+  /* social sign-in — rendered only when the provider is actually configured */
+  .or{display:flex;align-items:center;gap:10px;margin:18px 0 14px;color:var(--faint);
+      font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase}
+  .or:before,.or:after{content:"";flex:1;height:1px;background:rgba(150,140,120,.2)}
+  .social{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:50px;
+          border-radius:12px;text-decoration:none;font-size:15px;font-weight:600;margin-bottom:10px}
+  .social.google{background:#F4F1EA;color:#1A1A1A}
+  .social.apple{background:transparent;color:var(--ink);border:1px solid rgba(244,241,234,.5)}
+  .social:active{transform:scale(.98)}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.78);display:none;
          align-items:center;justify-content:center;padding:28px;z-index:50}
   .modal.show{display:flex}
@@ -808,6 +823,8 @@ APP_HTML = """<!doctype html>
   .modal button{margin-top:20px;width:100%;height:46px;border:none;border-radius:12px;
                 background:var(--amber);color:#1a0f00;font-family:var(--mono);font-weight:700;
                 font-size:12px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer}
+  .modal button.ghost{margin-top:10px;background:transparent;color:var(--muted);
+                border:1px solid rgba(150,140,120,.3)}
   .seeall{display:block;margin-top:12px;text-align:center;text-decoration:none;
           font-family:var(--mono);font-size:11px;letter-spacing:1.5px;
           color:var(--amber-bright);text-transform:uppercase}
@@ -836,7 +853,18 @@ APP_HTML = """<!doctype html>
       <div class="field"><input id="password" type="password" placeholder="Password (8+ characters)"></div>
       <div class="err" id="authErr"></div>
       <button class="primary" id="authBtn" onclick="submitAuth()">Sign in</button>
-      <div class="soon">Sign in with Google — coming once the app is hosted.</div>
+
+      <div id="socialWrap" style="display:none">
+        <div class="or"><span>or</span></div>
+        <a class="social google" id="btnGoogle" href="/auth/google/start" style="display:none">
+          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 01-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.83.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.96v2.33A9 9 0 009 18z"/><path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 013.68 9c0-.59.1-1.17.27-1.7V4.97H.96A9 9 0 000 9c0 1.45.35 2.83.96 4.03l3-2.32z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.9 11.43 0 9 0A9 9 0 00.96 4.97l3 2.33C4.66 5.17 6.65 3.58 9 3.58z"/></svg>
+          <span>Continue with Google</span>
+        </a>
+        <a class="social apple" id="btnApple" href="/auth/apple/start" style="display:none">
+          <svg width="16" height="18" viewBox="0 0 16 18" fill="currentColor" aria-hidden="true"><path d="M13.1 9.3c0-2.15 1.75-3.18 1.83-3.23-1-1.46-2.55-1.66-3.1-1.68-1.32-.13-2.58.78-3.25.78-.67 0-1.7-.76-2.8-.74-1.44.02-2.77.84-3.51 2.13-1.5 2.6-.38 6.45 1.08 8.56.71 1.03 1.56 2.19 2.68 2.15 1.08-.04 1.48-.7 2.78-.7 1.3 0 1.66.7 2.8.68 1.15-.02 1.88-1.05 2.58-2.09.82-1.2 1.15-2.36 1.17-2.42-.03-.01-2.25-.86-2.26-3.44zM10.98 2.9c.59-.72.98-1.71.87-2.7-.85.03-1.87.56-2.48 1.28-.55.63-1.02 1.65-.9 2.62.94.07 1.9-.48 2.51-1.2z"/></svg>
+          <span>Continue with Apple</span>
+        </a>
+      </div>
     </div>
   </div>
 
@@ -844,7 +872,7 @@ APP_HTML = """<!doctype html>
   <div id="app">
     <div class="top">
       <div class="brand">No Clú</div>
-      <div class="who"><span class="name" id="whoName"></span><button class="out" onclick="logout()">Sign out</button></div>
+      <div class="who"><span class="name" id="whoName"></span><button class="out" onclick="askLogout()">Sign out</button></div>
     </div>
     <main>
       <div class="status" id="status">Tap the lens</div>
@@ -884,6 +912,15 @@ APP_HTML = """<!doctype html>
         <button onclick="closeSyncPopup()">Got it</button>
       </div>
     </div>
+
+    <div class="modal" id="logoutModal">
+      <div class="box">
+        <h3>Sign out of No Clú?</h3>
+        <p>Your scans stay safe in your account — sign back in any time to see them.</p>
+        <button onclick="confirmLogout()">Sign out</button>
+        <button class="ghost" onclick="cancelLogout()">Cancel</button>
+      </div>
+    </div>
   </div>
 <script>
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
@@ -915,7 +952,11 @@ APP_HTML = """<!doctype html>
     }catch(e){ err.textContent='Could not reach the server.'; }
     btn.disabled=false;
   }
-  async function logout(){
+  // Signing out is easy to hit by accident, so it takes a deliberate confirm.
+  function askLogout(){ document.getElementById('logoutModal').classList.add('show'); }
+  function cancelLogout(){ document.getElementById('logoutModal').classList.remove('show'); }
+  async function confirmLogout(){
+    document.getElementById('logoutModal').classList.remove('show');
     try{ await fetch('/auth/logout',{method:'POST'}); }catch(e){}
     document.getElementById('password').value='';
     showGate();
@@ -1040,6 +1081,14 @@ APP_HTML = """<!doctype html>
     card.classList.add('show');
   }
 
+  // Show a social button only if its credentials exist server-side.
+  (function(){
+    var g = "__GOOGLE_ENABLED__" === "1", a = "__APPLE_ENABLED__" === "1";
+    if(g) document.getElementById('btnGoogle').style.display='flex';
+    if(a) document.getElementById('btnApple').style.display='flex';
+    if(g || a) document.getElementById('socialWrap').style.display='block';
+  })();
+
   setMode('login');
   checkAuth();
 </script>
@@ -1086,6 +1135,15 @@ SHORTCUT_HTML = """<!doctype html>
   .btn.ghost{background:rgba(224,165,90,.1);border:1px solid rgba(224,165,90,.4);color:var(--amber-bright)}
   ol.manual{margin:12px 0 0 18px;color:var(--muted);font-size:13.5px;line-height:1.7}
   ol.manual b{color:var(--ink)}
+  .trigger{padding:13px 0;border-bottom:1px solid rgba(150,140,120,.13)}
+  .trigger:last-child{border-bottom:none}
+  .tname{font-size:14.5px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .tbadge{font-family:var(--mono);font-size:9.5px;letter-spacing:1px;text-transform:uppercase;
+          padding:3px 7px;border-radius:20px;border:1px solid rgba(150,140,120,.35);color:var(--faint)}
+  .tbadge.best{border-color:rgba(224,165,90,.5);color:var(--amber-bright);background:rgba(224,165,90,.08)}
+  .tsteps{color:var(--muted);font-size:13px;line-height:1.55;margin-top:6px}
+  .tsteps b{color:var(--ink)}
+  .note{display:block;color:var(--faint);font-size:12px;margin-top:6px;line-height:1.5}
   code{font-family:var(--mono);font-size:12px;background:rgba(224,165,90,.12);color:var(--amber-bright);
        padding:2px 6px;border-radius:5px;word-break:break-all}
   #need,#setup{display:none}
@@ -1122,17 +1180,44 @@ SHORTCUT_HTML = """<!doctype html>
       <div id="oneTap">
         <p>Tap the button below. iPhone will open Shortcuts and ask you to <b>paste your personal link</b> — press and hold, then <b>Paste</b> (it's already copied from Step 1). Tap <b>Add Shortcut</b>. Done!</p>
         <a class="btn" id="addBtn" href="__ICLOUD_URL__">＋ Add the No Clú Shortcut</a>
-        <p style="margin-top:14px">Then bind it to your <b>Action Button</b> or <b>Back Tap</b> (Settings → Accessibility → Touch → Back Tap) so one tap scans instantly.</p>
       </div>
       <div id="manual" style="display:none">
-        <p>Build a tiny Shortcut once (takes a minute):</p>
+        <p>Build it once (about a minute). The last two actions are what make the result open in this app.</p>
         <ol class="manual">
           <li>Open the <b>Shortcuts</b> app → <b>+</b> to create a new one.</li>
           <li>Add action <b>Take Screenshot</b>.</li>
           <li>Add action <b>Get Contents of URL</b>. Set URL to your copied link, tap <b>Show More</b>: Method <b>POST</b>, Request Body <b>File</b>, and choose the <b>Screenshot</b> variable.</li>
-          <li>Add action <b>Show Result</b> (or Quick Look).</li>
-          <li>Name it <b>No Clú</b>, then bind it to your <b>Action Button</b> or <b>Back Tap</b>.</li>
+          <li>Add action <b>Show Alert</b>. Set the message to the <b>Contents of URL</b> variable, and change the OK button text to <b>Open in No Clú</b>.</li>
+          <li>Add action <b>Get URLs from Input</b> (input = <b>Contents of URL</b>), then <b>Get Last Item from List</b>, then <b>Open URLs</b>.</li>
+          <li>Name it <b>No Clú</b>.</li>
         </ol>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="n">Step 3</div>
+      <h2>Pick how to launch it</h2>
+      <p>You only need <b>one</b> of these. They're listed fastest-to-set-up first.</p>
+
+      <div class="trigger">
+        <div class="tname">🗣️ Just ask Siri <span class="tbadge best">no setup</span></div>
+        <div class="tsteps">Say <b>“Hey Siri, No Clú”</b>. This works the moment the Shortcut is added — nothing else to configure.</div>
+      </div>
+
+      <div class="trigger">
+        <div class="tname">📲 Home Screen icon <span class="tbadge">3 taps</span></div>
+        <div class="tsteps">In <b>Shortcuts</b>, press and hold the No Clú shortcut → <b>Share</b> → <b>Add to Home Screen</b>. Then it's one tap from your home screen, like any app.</div>
+      </div>
+
+      <div class="trigger">
+        <div class="tname">🎛️ Control Center <span class="tbadge">iOS 18+</span></div>
+        <div class="tsteps">Swipe down from the top-right → <b>+</b> (top left) → <b>Add a Control</b> → search <b>Shortcut</b> → pick No Clú. Then it's a swipe and a tap from anywhere.</div>
+      </div>
+
+      <div class="trigger">
+        <div class="tname">👆 Back Tap — double-tap the back of your phone</div>
+        <div class="tsteps">Open <b>Settings</b> → <b>Accessibility</b> → <b>Touch</b> → <b>Back Tap</b> → <b>Double Tap</b> → choose <b>No Clú</b>.
+          <span class="note">Apple only lets this be set in Settings — no app can turn it on for you, which is why it's the longest of the four.</span></div>
       </div>
     </div>
   </div>
@@ -1613,7 +1698,9 @@ async def api_title(request: Request, scan_id: int):
 
 @app.get("/app", response_class=HTMLResponse)
 async def app_page():
-    return APP_HTML
+    return (APP_HTML
+            .replace("__GOOGLE_ENABLED__", "1" if GOOGLE_CLIENT_ID else "0")
+            .replace("__APPLE_ENABLED__", "1" if APPLE_CLIENT_ID else "0"))
 
 
 @app.get("/shortcut", response_class=HTMLResponse)
@@ -1781,6 +1868,7 @@ async def scan_text(request: Request, country: Optional[str] = None, token: Opti
 
     # Save to the account that owns this token, so back-tap scans sync to the app.
     # Best-effort: a history-write failure must never break the notification.
+    saved_id = None
     if token:
         try:
             session = db.SessionLocal()
@@ -1788,10 +1876,11 @@ async def scan_text(request: Request, country: Optional[str] = None, token: Opti
                 user = db.get_user_by_scan_token(session, token)
                 if user:
                     poster = await fetch_poster(content)
-                    db.add_scan(session, user.id, title=content.title,
-                                content_type=content.content_type, year=content.year,
-                                poster=poster, detail=content.detail,
-                                season=content.season, episode=content.episode)
+                    saved = db.add_scan(session, user.id, title=content.title,
+                                        content_type=content.content_type, year=content.year,
+                                        poster=poster, detail=content.detail,
+                                        season=content.season, episode=content.episode)
+                    saved_id = saved.id
             finally:
                 session.close()
         except Exception:
@@ -1801,4 +1890,9 @@ async def scan_text(request: Request, country: Optional[str] = None, token: Opti
     jw = justwatch_url(content, resolved_country)
     if jw:
         lines.append(f"▶ Where to watch in {resolved_country}: {jw}")
+    # Last line, and deliberately the LAST url in the reply: the Shortcut grabs
+    # the final URL and opens it, landing the user on this exact scan in the app.
+    if saved_id is not None:
+        base = str(request.base_url).rstrip("/")
+        lines.append(f"{SCAN_APP_LINK_LABEL}: {base}/title/{saved_id}")
     return "\n".join(lines)
