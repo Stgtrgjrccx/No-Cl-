@@ -14,16 +14,18 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import time
 from base64 import standard_b64encode
 from datetime import datetime
 from typing import Literal, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
+                               RedirectResponse)
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, ValidationError
 
@@ -67,7 +69,12 @@ ICLOUD_SHORTCUT_URL = os.getenv("ICLOUD_SHORTCUT_URL", "").strip()
 # Social sign-in appears only once its credentials exist, so the sign-in screen
 # never shows a button that cannot work. Email + password always works.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
 APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "").strip()
+GOOGLE_STATE_COOKIE = "noclu_oauth_state"
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 # Trailing label on the Shortcut's reply; its URL is what the Shortcut opens.
 SCAN_APP_LINK_LABEL = "📱 Open in No Clú"
 
@@ -1434,6 +1441,99 @@ async def auth_login(request: Request, response: Response, identifier: str = For
 async def auth_logout(response: Response):
     response.delete_cookie(auth.SESSION_COOKIE)
     return {"ok": True}
+
+
+def _google_redirect_uri(request: Request) -> str:
+    """Must match a URI registered in the Google Cloud console, exactly."""
+    return f"{str(request.base_url).rstrip('/')}/auth/google/callback"
+
+
+@app.get("/auth/google/start")
+async def auth_google_start(request: Request):
+    """Send the user to Google, carrying a signed one-time state."""
+    if not GOOGLE_CLIENT_ID:
+        # Not configured: behave as if the feature doesn't exist rather than
+        # bouncing the user to a broken Google error page.
+        return JSONResponse({"error": "google sign-in is not configured"}, status_code=404)
+
+    state = auth.make_oauth_state()
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": _google_redirect_uri(request),
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
+    redirect = RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}", status_code=302)
+    # The same value goes in a cookie; the callback demands both and that they
+    # match, so a state minted in someone else's browser is useless here.
+    redirect.set_cookie(
+        GOOGLE_STATE_COOKIE, state, max_age=auth.OAUTH_STATE_MAX_AGE,
+        httponly=True, samesite="lax",
+        secure=request.headers.get("x-forwarded-proto", request.url.scheme) == "https",
+    )
+    return redirect
+
+
+@app.get("/auth/google/callback")
+async def auth_google_callback(request: Request, code: Optional[str] = None,
+                               state: Optional[str] = None, error: Optional[str] = None):
+    """Exchange Google's code for the user's identity and sign them in."""
+    if error or not code:
+        return RedirectResponse("/app?signin=cancelled", status_code=302)
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):
+        return JSONResponse({"error": "google sign-in is not configured"}, status_code=404)
+
+    cookie_state = request.cookies.get(GOOGLE_STATE_COOKIE, "")
+    if (not state or not cookie_state or not secrets.compare_digest(state, cookie_state)
+            or auth.read_oauth_state(state) is None):
+        return JSONResponse({"error": "sign-in expired or invalid — please try again"},
+                            status_code=400)
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            token_res = await http.post(GOOGLE_TOKEN_URL, data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": _google_redirect_uri(request),
+                "grant_type": "authorization_code",
+            })
+            if token_res.status_code != 200:
+                return JSONResponse({"error": "Google sign-in failed — please try again"},
+                                    status_code=400)
+            access_token = token_res.json().get("access_token", "")
+            info_res = await http.get(GOOGLE_USERINFO_URL,
+                                      headers={"Authorization": f"Bearer {access_token}"})
+            if info_res.status_code != 200:
+                return JSONResponse({"error": "Google sign-in failed — please try again"},
+                                    status_code=400)
+            info = info_res.json()
+    except Exception:
+        return JSONResponse({"error": "Couldn't reach Google — please try again"},
+                            status_code=502)
+
+    google_id = info.get("sub")
+    if not google_id:
+        return JSONResponse({"error": "Google sign-in failed — please try again"},
+                            status_code=400)
+    # Only trust a verified address; an unverified one could belong to someone
+    # else and would link this login onto their existing account.
+    email = info.get("email") if info.get("email_verified") else None
+
+    session = db.SessionLocal()
+    try:
+        user = db.link_or_create_google_user(
+            session, google_id=google_id, email=email, display_name=info.get("name"))
+        user_id = user.id
+    finally:
+        session.close()
+
+    response = RedirectResponse("/app", status_code=302)
+    _set_session_cookie(request, response, user_id)
+    response.delete_cookie(GOOGLE_STATE_COOKIE)
+    return response
 
 
 @app.get("/auth/me")

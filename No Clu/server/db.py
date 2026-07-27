@@ -141,6 +141,32 @@ def get_user_by_scan_token(db, token: str) -> Optional[User]:
     return db.scalar(select(User).where(User.scan_token == token))
 
 
+def link_or_create_google_user(db, *, google_id: str, email: Optional[str] = None,
+                               display_name: Optional[str] = None) -> "User":
+    """Resolve a Google sign-in to exactly one account.
+
+    Order matters. `google_id` is Google's stable identifier, so it wins even if
+    the person later changes their Google email address. Only if that misses do
+    we match on email — which links Google onto an account that already exists
+    from a password sign-up, instead of silently creating a second account and
+    appearing to lose the user's entire scan history.
+    """
+    user = get_user_by_google_id(db, google_id)
+    if user:
+        return user
+
+    if email:
+        user = get_user_by_email(db, email)
+        if user:
+            user.google_id = google_id
+            if display_name and not user.display_name:
+                user.display_name = display_name
+            db.commit()
+            return user
+
+    return create_user(db, email=email, google_id=google_id, display_name=display_name)
+
+
 def create_user(db, *, email=None, phone=None, password_hash=None,
                 google_id=None, display_name=None) -> User:
     user = User(

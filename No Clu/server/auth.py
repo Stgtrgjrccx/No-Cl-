@@ -1,22 +1,25 @@
-"""Authentication for No Clú: password hashing + signed session cookies.
+"""Authentication for No Clú: password hashing, session cookies, OAuth state.
 
-Google OAuth is added in a later step (it needs the public hosted callback
-URL). This module covers everything that works without external accounts:
-email/phone + password, and issuing/reading a tamper-proof session cookie.
+Covers email/phone + password, issuing/reading a tamper-proof session cookie,
+and the signed one-time state that protects the Google sign-in round trip.
 """
 
 import os
 import re
+import secrets
 
 import bcrypt
-from itsdangerous import BadSignature, URLSafeSerializer
+from itsdangerous import BadSignature, SignatureExpired, URLSafeSerializer, URLSafeTimedSerializer
 
 # Signs session cookies so a user id can't be forged. In production set
 # SESSION_SECRET to a long random string; a dev default keeps local runs working.
 _SECRET = os.getenv("SESSION_SECRET", "dev-only-change-me-in-production")
 _serializer = URLSafeSerializer(_SECRET, salt="noclu-session")
+# Separate salt: an OAuth state must never be usable as a session, or vice versa.
+_state_serializer = URLSafeTimedSerializer(_SECRET, salt="noclu-oauth-state")
 
 SESSION_COOKIE = "noclu_session"
+OAUTH_STATE_MAX_AGE = 600  # 10 minutes is ample for one sign-in round trip
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PHONE_RE = re.compile(r"^\+?[0-9]{7,15}$")
 
@@ -47,6 +50,26 @@ def read_session(token: str):
         data = _serializer.loads(token)
         return data.get("uid")
     except BadSignature:
+        return None
+
+
+def make_oauth_state() -> str:
+    """A signed, single-use, time-limited value for the OAuth `state` parameter.
+
+    Carries a random nonce so two sign-ins never share a state, and is also
+    stored in a cookie — the callback requires both to match, which is what
+    stops an attacker starting a login in your browser with their own code.
+    """
+    return _state_serializer.dumps({"n": secrets.token_urlsafe(16)})
+
+
+def read_oauth_state(token: str, max_age: int = OAUTH_STATE_MAX_AGE):
+    """Return the state payload if the token is genuine and fresh, else None."""
+    if not token:
+        return None
+    try:
+        return _state_serializer.loads(token, max_age=max_age)
+    except (BadSignature, SignatureExpired):
         return None
 
 
