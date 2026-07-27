@@ -766,32 +766,6 @@ APP_HTML = """<!doctype html>
   .pupil{width:54px;height:54px;border-radius:16px;transform:rotate(45deg);
          background:radial-gradient(circle at 36% 32%,var(--amber-bright),var(--amber) 70%);animation:coreGlow 2.4s ease-in-out infinite}
   .stage.scan .pupil{animation:none;background:radial-gradient(circle at 36% 32%,#fff,var(--amber-bright) 70%)}
-  #file{display:none}
-  .card{width:100%;margin-top:26px;background:var(--card);border:1px solid rgba(224,165,90,.22);border-radius:18px;overflow:hidden;
-        animation:fadeUp .5s ease-out;display:none}
-  .card.show{display:block}
-  .card img.poster{width:100%;display:none;border-bottom:1px solid rgba(224,165,90,.15)}
-  .card .body{padding:18px}
-  .card .ttl{font-size:21px;font-weight:700;line-height:1.2}
-  .card .meta{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--muted);margin-top:6px;text-transform:uppercase}
-  .card .det{color:#cbb89a;font-size:14px;margin-top:12px;line-height:1.5}
-  .watchlabel{font-family:var(--mono);font-size:10.5px;letter-spacing:1px;color:var(--faint);text-transform:uppercase;margin-top:16px}
-  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px}
-  .chips a{font-family:var(--mono);font-size:11px;letter-spacing:.5px;text-decoration:none;
-           padding:8px 12px;border-radius:20px;border:1px solid rgba(224,165,90,.35);color:var(--amber-bright);
-           background:rgba(224,165,90,.07)}
-  .cta{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;text-decoration:none;
-       height:50px;border-radius:12px;background:var(--amber);color:#1a0f00;font-family:var(--mono);font-weight:700;
-       font-size:13px;letter-spacing:1.5px;text-transform:uppercase}
-  /* Primary action: one tap straight to the best place to watch. */
-  .primary-action{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:18px;
-       text-decoration:none;height:52px;border-radius:12px;background:var(--amber);color:#1A0F00;
-       font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;
-       box-shadow:0 0 24px rgba(224,165,90,.4);transition:transform .15s}
-  .primary-action:active{transform:scale(.97)}
-  /* When a primary action exists the JustWatch link steps down to a quiet secondary. */
-  .cta.secondary{background:transparent;border:1px solid rgba(224,165,90,.35);color:var(--amber-bright);
-       box-shadow:none;height:46px;font-size:12px}
   .connect{width:100%;margin-top:34px;background:var(--card);border:1px solid rgba(224,165,90,.2);border-radius:16px;padding:18px}
   .connect h2{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--amber-bright);text-transform:uppercase;margin-bottom:8px}
   .connect p{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px}
@@ -825,6 +799,16 @@ APP_HTML = """<!doctype html>
                 font-size:12px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer}
   .modal button.ghost{margin-top:10px;background:transparent;color:var(--muted);
                 border:1px solid rgba(150,140,120,.3)}
+  .howbox{text-align:left;max-width:360px}
+  .hows{margin-top:16px}
+  .how{display:flex;gap:12px;align-items:flex-start;padding:11px 0;border-bottom:1px solid rgba(150,140,120,.12)}
+  .how:last-child{border-bottom:none}
+  .how .hi{font-size:18px;line-height:1.2;flex-shrink:0}
+  .how b{display:block;color:var(--ink);font-size:14px;font-weight:600;line-height:1.35}
+  .how span{display:block;color:var(--faint);font-size:12px;margin-top:3px;line-height:1.4}
+  .modal-link{display:block;margin-top:16px;text-align:center;text-decoration:none;
+              font-family:var(--mono);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;
+              color:var(--amber-bright)}
   .seeall{display:block;margin-top:12px;text-align:center;text-decoration:none;
           font-family:var(--mono);font-size:11px;letter-spacing:1.5px;
           color:var(--amber-bright);text-transform:uppercase}
@@ -875,27 +859,11 @@ APP_HTML = """<!doctype html>
       <div class="who"><span class="name" id="whoName"></span><button class="out" onclick="askLogout()">Sign out</button></div>
     </div>
     <main>
-      <div class="status" id="status">Tap the lens</div>
+      <div class="status" id="status">Tap to see how</div>
       <div class="stage" id="stage">
         <div class="ring a"></div><div class="ring b"></div>
         <div class="pulse" id="pulse"></div>
         <div class="lens" id="lens"><div class="pupil"></div></div>
-      </div>
-      <input type="file" id="file" accept="image/*">
-      <div class="card" id="card">
-        <img class="poster" id="poster" alt="">
-        <div class="body">
-          <div class="ttl" id="ttl"></div>
-          <div class="meta" id="meta"></div>
-          <div class="det" id="det"></div>
-          <a class="primary-action" id="primaryAction" target="_blank" rel="noopener" style="display:none">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 2l9 5-9 5V2z" fill="#1A0F00"></path></svg>
-            <span id="primaryLabel"></span>
-          </a>
-          <div class="watchlabel" id="watchLabel" style="display:none"></div>
-          <div class="chips" id="chips" style="display:none"></div>
-          <a class="cta" id="cta" target="_blank" rel="noopener" style="display:none">▶ <span id="ctaLabel"></span></a>
-        </div>
       </div>
       <div class="recent" id="recentWrap" style="display:none">
         <h2>Recent scans</h2>
@@ -913,6 +881,21 @@ APP_HTML = """<!doctype html>
       </div>
     </div>
 
+    <div class="modal" id="howModal">
+      <div class="box howbox">
+        <h3>How to scan</h3>
+        <p>No Clú reads whatever is on your screen from your phone — pick any one of these to start a scan.</p>
+        <div class="hows">
+          <div class="how"><span class="hi">🗣️</span><div><b>“Hey Siri, No Clú”</b><span>Works straight away, nothing to set up</span></div></div>
+          <div class="how"><span class="hi">👆</span><div><b>Double-tap the back of your phone</b><span>Once Back Tap is switched on</span></div></div>
+          <div class="how"><span class="hi">📲</span><div><b>Tap the No Clú icon on your Home Screen</b><span>If you added the Shortcut there</span></div></div>
+          <div class="how"><span class="hi">🎛️</span><div><b>From Control Center</b><span>Swipe down, tap the shortcut</span></div></div>
+        </div>
+        <a class="modal-link" href="/shortcut">Set these up →</a>
+        <button onclick="closeHowTo()">Got it</button>
+      </div>
+    </div>
+
     <div class="modal" id="logoutModal">
       <div class="box">
         <h3>Sign out of No Clú?</h3>
@@ -924,12 +907,6 @@ APP_HTML = """<!doctype html>
   </div>
 <script>
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
-  // "IN" -> "India", so labels don't read "streaming in IN".
-  function countryName(cc){
-    if(!cc) return '';
-    try{ return new Intl.DisplayNames(['en'],{type:'region'}).of(cc) || cc; }
-    catch(e){ return cc; }
-  }
   var mode='login';
   function setMode(m){
     mode=m;
@@ -1003,83 +980,17 @@ APP_HTML = """<!doctype html>
     }catch(e){}
   }
 
-  // ---- scanning ----
-  var lens=document.getElementById('lens'), file=document.getElementById('file'),
-      stage=document.getElementById('stage'), statusEl=document.getElementById('status'),
-      pulse=document.getElementById('pulse'), card=document.getElementById('card');
-  var busy=false;
-  lens.addEventListener('click', function(){ if(!busy) file.click(); });
-  file.addEventListener('change', function(e){ if(e.target.files[0]) scan(e.target.files[0]); });
+  // ---- the lens ----
+  // No Clú can't read your screen from a web page — iOS forbids it. Scanning
+  // happens from the Shortcut (Siri / Back Tap / Home Screen / Control Center),
+  // so tapping the lens plays its pulse and shows those options rather than
+  // asking for a file upload.
+  var lens=document.getElementById('lens'), stage=document.getElementById('stage'),
+      statusEl=document.getElementById('status'), pulse=document.getElementById('pulse');
   function firePulse(){ pulse.classList.remove('fire'); void pulse.offsetWidth; pulse.classList.add('fire'); }
-
-  async function scan(f){
-    busy=true; card.classList.remove('show');
-    stage.classList.add('scan'); statusEl.classList.add('on'); statusEl.textContent='Analyzing…';
-    firePulse();
-    var fd=new FormData(); fd.append('image', f);
-    try{
-      var r=await fetch('/identify?country=IN',{method:'POST',body:fd});
-      if(r.status===401){ showGate(); stage.classList.remove('scan'); busy=false; return; }
-      var d=await r.json(); render(d); loadHistory();
-    }catch(err){
-      statusEl.textContent='Could not reach server';
-      document.getElementById('ttl').textContent='⚠️ Connection failed';
-      document.getElementById('meta').textContent=''; document.getElementById('det').textContent=String(err);
-      document.getElementById('cta').style.display='none';
-      document.getElementById('poster').style.display='none'; card.classList.add('show');
-    }
-    stage.classList.remove('scan'); busy=false;
-  }
-  function render(d){
-    if(!d.identified){
-      statusEl.classList.remove('on'); statusEl.textContent='Tap the lens';
-      document.getElementById('ttl').textContent=d.summary||'No result';
-      document.getElementById('meta').textContent=''; document.getElementById('det').textContent='';
-      document.getElementById('cta').style.display='none';
-      document.getElementById('poster').style.display='none'; card.classList.add('show'); return;
-    }
-    statusEl.textContent='Match locked';
-    var poster=document.getElementById('poster');
-    if(d.poster){ poster.src=d.poster; poster.style.display='block'; } else { poster.style.display='none'; }
-    document.getElementById('ttl').textContent=d.title||'Unknown';
-    var meta=[];
-    if(d.type) meta.push(String(d.type).replace('_',' '));
-    if(d.year) meta.push(d.year);
-    if(d.season&&d.episode) meta.push('S'+d.season+' · E'+d.episode);
-    document.getElementById('meta').textContent=meta.join('  ·  ');
-    document.getElementById('det').textContent=d.detail||'';
-
-    // Where to watch, in the user's region, with a tappable link per platform.
-    var label=document.getElementById('watchLabel'), chips=document.getElementById('chips'), cta=document.getElementById('cta');
-    var cc=countryName(d.country||'IN');
-    var provs=d.providers||[];
-
-    // One-tap primary action, straight to the best place to watch. The verb is
-    // driven by how it's offered, so the button never implies free when it costs.
-    var prim=d.primary, act=document.getElementById('primaryAction');
-    if(prim && prim.url){
-      var verb = prim.kind==='rent' ? 'Rent on' : prim.kind==='buy' ? 'Buy on' : 'Open in';
-      act.href=prim.url;
-      document.getElementById('primaryLabel').textContent=verb+' '+prim.name;
-      act.style.display='flex';
-      // Everything else becomes a secondary chip — don't repeat the primary.
-      provs=provs.filter(function(p){return p.name!==prim.name;});
-    } else { act.style.display='none'; }
-
-    if(provs.length){
-      label.textContent=(prim?'Also on':'Streaming in '+cc); label.style.display='block';
-      chips.innerHTML=provs.map(function(p){return '<a href="'+esc(p.url)+'" target="_blank" rel="noopener">'+esc(p.name)+'</a>';}).join('');
-      chips.style.display='flex';
-    } else { label.style.display='none'; chips.style.display='none'; chips.innerHTML=''; }
-
-    if(d.justwatch){
-      cta.href=d.justwatch;
-      cta.classList.toggle('secondary', !!prim);
-      document.getElementById('ctaLabel').textContent=(prim||provs.length?'See all options in '+cc:'Where to watch in '+cc);
-      cta.style.display='flex';
-    } else { cta.style.display='none'; }
-    card.classList.add('show');
-  }
+  function openHowTo(){ firePulse(); document.getElementById('howModal').classList.add('show'); }
+  function closeHowTo(){ document.getElementById('howModal').classList.remove('show'); }
+  lens.addEventListener('click', openHowTo);
 
   // Show a social button only if its credentials exist server-side.
   (function(){
