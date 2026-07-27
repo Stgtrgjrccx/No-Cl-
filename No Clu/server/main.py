@@ -777,6 +777,15 @@ APP_HTML = """<!doctype html>
   .cta{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;text-decoration:none;
        height:50px;border-radius:12px;background:var(--amber);color:#1a0f00;font-family:var(--mono);font-weight:700;
        font-size:13px;letter-spacing:1.5px;text-transform:uppercase}
+  /* Primary action: one tap straight to the best place to watch. */
+  .primary-action{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:18px;
+       text-decoration:none;height:52px;border-radius:12px;background:var(--amber);color:#1A0F00;
+       font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;
+       box-shadow:0 0 24px rgba(224,165,90,.4);transition:transform .15s}
+  .primary-action:active{transform:scale(.97)}
+  /* When a primary action exists the JustWatch link steps down to a quiet secondary. */
+  .cta.secondary{background:transparent;border:1px solid rgba(224,165,90,.35);color:var(--amber-bright);
+       box-shadow:none;height:46px;font-size:12px}
   .connect{width:100%;margin-top:34px;background:var(--card);border:1px solid rgba(224,165,90,.2);border-radius:16px;padding:18px}
   .connect h2{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--amber-bright);text-transform:uppercase;margin-bottom:8px}
   .connect p{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px}
@@ -851,6 +860,10 @@ APP_HTML = """<!doctype html>
           <div class="ttl" id="ttl"></div>
           <div class="meta" id="meta"></div>
           <div class="det" id="det"></div>
+          <a class="primary-action" id="primaryAction" target="_blank" rel="noopener" style="display:none">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 2l9 5-9 5V2z" fill="#1A0F00"></path></svg>
+            <span id="primaryLabel"></span>
+          </a>
           <div class="watchlabel" id="watchLabel" style="display:none"></div>
           <div class="chips" id="chips" style="display:none"></div>
           <a class="cta" id="cta" target="_blank" rel="noopener" style="display:none">▶ <span id="ctaLabel"></span></a>
@@ -999,15 +1012,29 @@ APP_HTML = """<!doctype html>
     var label=document.getElementById('watchLabel'), chips=document.getElementById('chips'), cta=document.getElementById('cta');
     var cc=countryName(d.country||'IN');
     var provs=d.providers||[];
+
+    // One-tap primary action, straight to the best place to watch. The verb is
+    // driven by how it's offered, so the button never implies free when it costs.
+    var prim=d.primary, act=document.getElementById('primaryAction');
+    if(prim && prim.url){
+      var verb = prim.kind==='rent' ? 'Rent on' : prim.kind==='buy' ? 'Buy on' : 'Open in';
+      act.href=prim.url;
+      document.getElementById('primaryLabel').textContent=verb+' '+prim.name;
+      act.style.display='flex';
+      // Everything else becomes a secondary chip — don't repeat the primary.
+      provs=provs.filter(function(p){return p.name!==prim.name;});
+    } else { act.style.display='none'; }
+
     if(provs.length){
-      label.textContent='Streaming in '+cc; label.style.display='block';
+      label.textContent=(prim?'Also on':'Streaming in '+cc); label.style.display='block';
       chips.innerHTML=provs.map(function(p){return '<a href="'+esc(p.url)+'" target="_blank" rel="noopener">'+esc(p.name)+'</a>';}).join('');
       chips.style.display='flex';
     } else { label.style.display='none'; chips.style.display='none'; chips.innerHTML=''; }
 
     if(d.justwatch){
       cta.href=d.justwatch;
-      document.getElementById('ctaLabel').textContent=(provs.length?'See all options in '+cc:'Where to watch in '+cc);
+      cta.classList.toggle('secondary', !!prim);
+      document.getElementById('ctaLabel').textContent=(prim||provs.length?'See all options in '+cc:'Where to watch in '+cc);
       cta.style.display='flex';
     } else { cta.style.display='none'; }
     card.classList.add('show');
@@ -1257,6 +1284,14 @@ TITLE_HTML = """<!doctype html>
   .glabel{font-family:var(--mono);font-size:10px;letter-spacing:1px;color:var(--muted);text-transform:uppercase}
   .grp .chips{margin-top:8px}
   .nowhere{color:var(--faint);font-size:13.5px;line-height:1.5;margin-top:18px}
+  /* Primary action: one tap straight to the best place to watch. */
+  .primary-action{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:22px;
+       text-decoration:none;height:52px;border-radius:12px;background:var(--amber);color:#1A0F00;
+       font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;
+       box-shadow:0 0 24px rgba(224,165,90,.4);transition:transform .15s}
+  .primary-action:active{transform:scale(.97)}
+  .cta.secondary{background:transparent;border:1px solid rgba(224,165,90,.35);color:var(--amber-bright);
+       height:46px;font-size:12px}
   .cta{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:16px;
        text-decoration:none;height:52px;border-radius:13px;background:var(--amber);color:#1a0f00;
        font-family:var(--mono);font-weight:700;font-size:12.5px;letter-spacing:1.5px;text-transform:uppercase}
@@ -1271,6 +1306,10 @@ TITLE_HTML = """<!doctype html>
     <h1 id="ttl"></h1>
     <div class="meta" id="meta"></div>
     <div class="detail" id="detail"></div>
+    <a class="primary-action" id="primaryAction" target="_blank" rel="noopener" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 2l9 5-9 5V2z" fill="#1A0F00"></path></svg>
+      <span id="primaryLabel"></span>
+    </a>
     <div class="label" id="label" style="display:none"></div>
     <div id="groups"></div>
     <div class="nowhere" id="nowhere" style="display:none"></div>
@@ -1311,6 +1350,23 @@ TITLE_HTML = """<!doctype html>
     // "in IN" reads like a typo — show the country's name when the browser knows it.
     var cc=countryName(d.country||'');
     var provs=d.providers||[], w=d.watch||{};
+
+    // Reset every watch-related slot first, so re-rendering can never leave a
+    // stale group list beside a contradictory "nothing listed" message.
+    document.getElementById('groups').innerHTML='';
+    document.getElementById('label').style.display='none';
+    document.getElementById('nowhere').style.display='none';
+
+    // One-tap primary action. The verb reflects how it's offered, so a rental
+    // is never dressed up as something already included.
+    var prim=d.primary, act=document.getElementById('primaryAction');
+    if(prim && prim.url){
+      var verb = prim.kind==='rent' ? 'Rent on' : prim.kind==='buy' ? 'Buy on' : 'Open in';
+      act.href=prim.url;
+      document.getElementById('primaryLabel').textContent=verb+' '+prim.name;
+      act.style.display='flex';
+    } else { act.style.display='none'; }
+
     function chips(list){
       return list.map(function(p){
         return '<a href="'+esc(p.url)+'" target="_blank" rel="noopener">'+esc(p.name)+'</a>';
@@ -1344,6 +1400,7 @@ TITLE_HTML = """<!doctype html>
     if(d.justwatch){
       var cta=document.getElementById('cta');
       cta.href=d.justwatch;
+      cta.classList.toggle('secondary', !!prim);
       cta.textContent = html||provs.length ? 'See all options & prices' : ('▶ Where to watch in '+cc);
       cta.style.display='flex';
     }
@@ -1461,36 +1518,58 @@ def _scan_to_dict(scan) -> dict:
     }
 
 
+def _group_watch(watch: Optional[dict], title: str, country: str) -> dict:
+    """Turn a raw TMDB availability dict into linked, categorised options.
+
+    Shared by /identify and /api/title so the result card and the detail page
+    can never disagree about where something can be watched.
+
+    Returns:
+      providers — flat, deduped across categories (a service that both streams
+                  and sells a title appears once)
+      watch     — the same entries kept in their stream/rent/buy buckets
+      primary   — the one service worth a single tap. A subscription the user
+                  likely already pays for beats a rental, which beats a purchase.
+    """
+    buckets = {"stream": [], "rent": [], "buy": []}
+    providers = []
+    seen = set()
+    if watch:
+        for key in ("stream", "rent", "buy"):
+            for name in watch.get(key) or []:
+                entry = {"name": name, "url": provider_link(name, title, country)}
+                buckets[key].append(entry)
+                if name not in seen:
+                    seen.add(name)
+                    providers.append(entry)
+    primary = None
+    for key in ("stream", "rent", "buy"):
+        if buckets[key]:
+            primary = dict(buckets[key][0])
+            primary["kind"] = key  # drives the button's verb: open / rent / buy
+            break
+    return {"providers": providers, "watch": buckets, "primary": primary}
+
+
 async def watch_options(content: ScreenContent, country: str) -> dict:
     """Where to watch, as tappable chips plus a JustWatch catch-all.
 
     Never raises: a detail page must still render its cover and description
     when availability lookup fails.
     """
-    buckets = {"stream": [], "rent": [], "buy": []}
-    providers = []
     try:
         watch = await tmdb_where_to_watch(content, country)
-        if watch:
-            seen = set()
-            for key in ("stream", "rent", "buy"):
-                for name in watch.get(key) or []:
-                    entry = {"name": name,
-                             "url": provider_link(name, content.title, country)}
-                    buckets[key].append(entry)
-                    # Flat list stays deduped across categories — a service that
-                    # both streams and sells a title should appear once there.
-                    if name not in seen:
-                        seen.add(name)
-                        providers.append(entry)
     except Exception:
-        buckets = {"stream": [], "rent": [], "buy": []}
-        providers = []
+        watch = None
     try:
-        jw = justwatch_url(content, country)
+        out = _group_watch(watch, content.title, country)
     except Exception:
-        jw = None
-    return {"providers": providers, "watch": buckets, "justwatch": jw}
+        out = _group_watch(None, content.title, country)
+    try:
+        out["justwatch"] = justwatch_url(content, country)
+    except Exception:
+        out["justwatch"] = None
+    return out
 
 
 @app.get("/api/history")
@@ -1601,12 +1680,10 @@ async def identify(request: Request, image: UploadFile = File(...), country: Opt
     poster = await fetch_poster(content)
 
     # "Where to watch in <country>" — build tappable per-platform links.
-    # `providers` is the exact list (from TMDB, when a key is configured);
-    # `justwatch` always works (no key) and lists every platform in-region.
-    providers = []
-    if watch and watch.get("stream"):
-        providers = [{"name": name, "url": provider_link(name, content.title, resolved_country)}
-                     for name in watch["stream"]]
+    # Same helper the detail page uses, so both surfaces agree. `justwatch`
+    # always works (no key) and lists every platform in-region.
+    grouped = _group_watch(watch, content.title, resolved_country)
+    providers = grouped["providers"]
     jw = justwatch_url(content, resolved_country)
 
     # Save to the signed-in user's history so it syncs across their devices.
@@ -1634,8 +1711,13 @@ async def identify(request: Request, image: UploadFile = File(...), country: Opt
         "confidence": content.confidence,
         "detail": content.detail,
         "country": resolved_country,
+        # NOTE: `watch` here is TMDB's RAW dict (plain provider-name strings),
+        # which /demo renders. /api/title's `watch` is the grouped, linked shape
+        # ({stream:[{name,url}]}). Different endpoints, different shapes — read
+        # `providers` and `primary` below if you want links.
         "watch": watch,
         "providers": providers,
+        "primary": grouped["primary"],
         "justwatch": jw,
         "poster": poster,
         "summary": build_summary(content, watch, resolved_country),
