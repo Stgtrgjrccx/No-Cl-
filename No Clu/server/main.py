@@ -799,16 +799,6 @@ APP_HTML = """<!doctype html>
                 font-size:12px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer}
   .modal button.ghost{margin-top:10px;background:transparent;color:var(--muted);
                 border:1px solid rgba(150,140,120,.3)}
-  .howbox{text-align:left;max-width:360px}
-  .hows{margin-top:16px}
-  .how{display:flex;gap:12px;align-items:flex-start;padding:11px 0;border-bottom:1px solid rgba(150,140,120,.12)}
-  .how:last-child{border-bottom:none}
-  .how .hi{font-size:18px;line-height:1.2;flex-shrink:0}
-  .how b{display:block;color:var(--ink);font-size:14px;font-weight:600;line-height:1.35}
-  .how span{display:block;color:var(--faint);font-size:12px;margin-top:3px;line-height:1.4}
-  .modal-link{display:block;margin-top:16px;text-align:center;text-decoration:none;
-              font-family:var(--mono);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;
-              color:var(--amber-bright)}
   .seeall{display:block;margin-top:12px;text-align:center;text-decoration:none;
           font-family:var(--mono);font-size:11px;letter-spacing:1.5px;
           color:var(--amber-bright);text-transform:uppercase}
@@ -859,7 +849,7 @@ APP_HTML = """<!doctype html>
       <div class="who"><span class="name" id="whoName"></span><button class="out" onclick="askLogout()">Sign out</button></div>
     </div>
     <main>
-      <div class="status" id="status">Tap to see how</div>
+      <div class="status" id="status">Tap the lens</div>
       <div class="stage" id="stage">
         <div class="ring a"></div><div class="ring b"></div>
         <div class="pulse" id="pulse"></div>
@@ -878,21 +868,6 @@ APP_HTML = """<!doctype html>
         <h3>Your scans are saved to your account</h3>
         <p>Everything you scan is stored here and available on any device you sign in from.</p>
         <button onclick="closeSyncPopup()">Got it</button>
-      </div>
-    </div>
-
-    <div class="modal" id="howModal">
-      <div class="box howbox">
-        <h3>How to scan</h3>
-        <p>No Clú reads whatever is on your screen from your phone — pick any one of these to start a scan.</p>
-        <div class="hows">
-          <div class="how"><span class="hi">🗣️</span><div><b>“Hey Siri, No Clú”</b><span>Works straight away, nothing to set up</span></div></div>
-          <div class="how"><span class="hi">👆</span><div><b>Double-tap the back of your phone</b><span>Once Back Tap is switched on</span></div></div>
-          <div class="how"><span class="hi">📲</span><div><b>Tap the No Clú icon on your Home Screen</b><span>If you added the Shortcut there</span></div></div>
-          <div class="how"><span class="hi">🎛️</span><div><b>From Control Center</b><span>Swipe down, tap the shortcut</span></div></div>
-        </div>
-        <a class="modal-link" href="/shortcut">Set these up →</a>
-        <button onclick="closeHowTo()">Got it</button>
       </div>
     </div>
 
@@ -981,16 +956,21 @@ APP_HTML = """<!doctype html>
   }
 
   // ---- the lens ----
-  // No Clú can't read your screen from a web page — iOS forbids it. Scanning
-  // happens from the Shortcut (Siri / Back Tap / Home Screen / Control Center),
-  // so tapping the lens plays its pulse and shows those options rather than
-  // asking for a file upload.
+  // Decorative for now: iOS won't let a web page read your screen, so real
+  // scanning happens from the Shortcut (Siri or Back Tap). Tapping toggles the
+  // lens between idle and active and plays the pulse — it makes no claim to be
+  // scanning, so it can't mislead.
   var lens=document.getElementById('lens'), stage=document.getElementById('stage'),
       statusEl=document.getElementById('status'), pulse=document.getElementById('pulse');
+  var lensOn=false;
   function firePulse(){ pulse.classList.remove('fire'); void pulse.offsetWidth; pulse.classList.add('fire'); }
-  function openHowTo(){ firePulse(); document.getElementById('howModal').classList.add('show'); }
-  function closeHowTo(){ document.getElementById('howModal').classList.remove('show'); }
-  lens.addEventListener('click', openHowTo);
+  function toggleLens(){
+    lensOn=!lensOn;
+    stage.classList.toggle('scan', lensOn);
+    statusEl.classList.toggle('on', lensOn);
+    if(lensOn) firePulse();
+  }
+  lens.addEventListener('click', toggleLens);
 
   // Show a social button only if its credentials exist server-side.
   (function(){
@@ -1108,21 +1088,11 @@ SHORTCUT_HTML = """<!doctype html>
     <div class="step">
       <div class="n">Step 3</div>
       <h2>Pick how to launch it</h2>
-      <p>You only need <b>one</b> of these. They're listed fastest-to-set-up first.</p>
+      <p>You only need <b>one</b> of these.</p>
 
       <div class="trigger">
         <div class="tname">🗣️ Just ask Siri <span class="tbadge best">no setup</span></div>
         <div class="tsteps">Say <b>“Hey Siri, No Clú”</b>. This works the moment the Shortcut is added — nothing else to configure.</div>
-      </div>
-
-      <div class="trigger">
-        <div class="tname">📲 Home Screen icon <span class="tbadge">3 taps</span></div>
-        <div class="tsteps">In <b>Shortcuts</b>, press and hold the No Clú shortcut → <b>Share</b> → <b>Add to Home Screen</b>. Then it's one tap from your home screen, like any app.</div>
-      </div>
-
-      <div class="trigger">
-        <div class="tname">🎛️ Control Center <span class="tbadge">iOS 18+</span></div>
-        <div class="tsteps">Swipe down from the top-right → <b>+</b> (top left) → <b>Add a Control</b> → search <b>Shortcut</b> → pick No Clú. Then it's a swipe and a tap from anywhere.</div>
       </div>
 
       <div class="trigger">
