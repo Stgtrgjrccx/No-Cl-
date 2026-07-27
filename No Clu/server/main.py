@@ -18,12 +18,12 @@ import secrets
 import time
 from base64 import standard_b64encode
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Dict, List, Literal, Optional
 from urllib.parse import quote_plus, urlencode
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, Request, Response, UploadFile
+from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                RedirectResponse)
 from PIL import Image, ImageDraw
@@ -83,14 +83,22 @@ SCAN_APP_LINK_LABEL = "📱 Open in No Clú"
 # accounts have zero free quota on the pinned gemini-2.0-flash, so "latest" is a
 # safer default). Get a key (no card) at https://aistudio.google.com/apikey
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
+# Tried in order, best first. A model whose daily free quota is used up is
+# skipped rather than failing the scan, so results degrade instead of stopping.
+GEMINI_MODELS = [m.strip() for m in os.getenv(
+    "GEMINI_MODELS", "gemini-flash-latest,gemini-flash-lite-latest"
+).split(",") if m.strip()]
 # Anthropic: claude-opus-4-8 is the most accurate; claude-haiku-4-5 the fastest.
 ANTHROPIC_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
 
 # Vision models read a ~1.15MP image at full fidelity; anything bigger just adds
 # upload + processing latency, so downscale before sending.
-MAX_IMAGE_EDGE = 1568
-JPEG_QUALITY = 80
+MAX_IMAGE_EDGE = 1920
+JPEG_QUALITY = 88
+MAX_FRAMES = 5
+MAX_AUDIO_BYTES = 2 * 1024 * 1024
+AUDIO_MIME_TYPES = frozenset({"audio/mp4", "audio/m4a", "audio/x-m4a",
+                              "audio/mpeg", "audio/wav", "audio/x-wav"})
 
 IDENTIFY_PROMPT = """\
 This is a single frame captured from someone's phone or TV screen. Identify what \
@@ -99,6 +107,15 @@ UI elements (Netflix/YouTube/Prime player chrome, titles, captions, channel name
 progress bars, watermarks, scoreboards).
 
 Rules:
+- You may be given SEVERAL frames captured a second apart from the same video, \
+and sometimes a short audio clip. Treat them as one piece of content, not several.
+- Trust signals in this order: (1) on-screen text — titles, episode labels, \
+player UI, and burned-in caption or sticker text; (2) audio — dialogue, lyrics, \
+commentary; (3) visual recognition of faces or scenery.
+- Read any overlaid caption or sticker text carefully. On short-form clips it \
+often names the film or show outright.
+- If the picture and the audio disagree, say so in detail and lower confidence \
+rather than inventing a compromise answer.
 - Give the official title, not a description of the scene.
 - For TV shows and anime, include season/episode if the UI shows it or you can tell \
 from the scene; otherwise leave them null.
@@ -156,6 +173,15 @@ class ProviderError(Exception):
     """Raised with a user-facing message when the vision call fails."""
 
 
+class ModelUnavailable(ProviderError):
+    """This model can't serve us right now — try the next one in the chain.
+
+    Covers a spent daily allowance (429) and a model Google has renamed or
+    withdrawn (404). Both are recoverable by falling through; neither should
+    end a scan while another model is left to try.
+    """
+
+
 class DailyCap:
     """In-process counter for /identify calls today. Resets when the date
     rolls over. `now_fn` is injectable so tests don't depend on real time."""
@@ -193,6 +219,48 @@ def shrink(raw: bytes) -> bytes:
     out = io.BytesIO()
     img.save(out, format="JPEG", quality=JPEG_QUALITY)
     return out.getvalue()
+
+
+def _encode_frames(blobs: List[bytes]) -> List[str]:
+    """Base64 JPEGs, ready for the model. Unreadable frames are skipped.
+
+    One corrupt frame in a burst must not sink the whole scan, so failures
+    here are dropped rather than raised.
+    """
+    frames = []
+    for blob in blobs[:MAX_FRAMES]:
+        if not blob:
+            continue
+        try:
+            frames.append(standard_b64encode(shrink(blob)).decode())
+        except Exception:
+            continue
+    return frames
+
+
+def _usable_audio(data: bytes, mime: str) -> Optional[Dict[str, str]]:
+    """Audio the model can use, or None. Never raises.
+
+    Audio is a bonus signal: when it's missing, oversized or the wrong type we
+    carry on with the frames alone rather than failing the scan.
+    """
+    if not data or len(data) > MAX_AUDIO_BYTES:
+        return None
+    base = (mime or "").split(";")[0].strip().lower()
+    if base not in AUDIO_MIME_TYPES:
+        return None
+    return {"mime": base, "data": standard_b64encode(data).decode()}
+
+
+def _gemini_parts(frames: List[str], audio: Optional[Dict[str, str]]) -> List[dict]:
+    """Assemble one request: the frames in capture order, then any audio, then
+    the instructions."""
+    parts: List[dict] = [{"inlineData": {"mimeType": "image/jpeg", "data": f}}
+                         for f in frames]
+    if audio:
+        parts.append({"inlineData": {"mimeType": audio["mime"], "data": audio["data"]}})
+    parts.append({"text": IDENTIFY_PROMPT})
+    return parts
 
 
 def _itunes_upsize(url: str, box: int = 1200) -> str:
@@ -325,18 +393,12 @@ def _parse_json_blob(text: str) -> ScreenContent:
 
 
 # --- Gemini (free) -----------------------------------------------------------
-async def identify_gemini(b64: str) -> ScreenContent:
-    if not GEMINI_API_KEY:
-        raise ProviderError("⚠️ No Clú: Gemini key missing — add GEMINI_API_KEY to server .env")
+async def _gemini_once(model: str, parts: List[dict]) -> ScreenContent:
+    """One attempt against one model. Raises ModelUnavailable on 429 or 404."""
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{GEMINI_MODEL}:generateContent")
+           f"{model}:generateContent")
     body = {
-        "contents": [{
-            "parts": [
-                {"inlineData": {"mimeType": "image/jpeg", "data": b64}},
-                {"text": IDENTIFY_PROMPT},
-            ]
-        }],
+        "contents": [{"parts": parts}],
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseSchema": GEMINI_SCHEMA,
@@ -344,15 +406,21 @@ async def identify_gemini(b64: str) -> ScreenContent:
         },
     }
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
+        async with httpx.AsyncClient(timeout=45.0) as http:
             r = await http.post(url, params={"key": GEMINI_API_KEY}, json=body)
     except httpx.HTTPError:
-        raise ProviderError("⚠️ No Clú: couldn't reach Google — check the Mac's internet")
+        raise ProviderError("⚠️ No Clú: couldn't reach Google — check your internet")
 
+    # Check for recoverable errors (fall through to the next model):
+    # - 429: daily quota exhausted
+    # - 404: model renamed or withdrawn by Google
+    # - 5xx (500-599): transient server-side error on Google's end
+    # These are recoverable; another model in the chain might succeed.
+    if r.status_code in (429, 404) or 500 <= r.status_code < 600:
+        raise ModelUnavailable(f"{model} unavailable (HTTP {r.status_code})")
+    # Configuration errors must propagate immediately to avoid masking misconfigurations:
     if r.status_code in (400, 401, 403):
-        raise ProviderError("⚠️ No Clú: Gemini key is missing or invalid — check server .env")
-    if r.status_code == 429:
-        raise ProviderError("⚠️ No Clú: hit Gemini's free daily limit — try again later")
+        raise ProviderError("⚠️ No Clú: Gemini key is missing or invalid — check the server settings")
     if r.status_code != 200:
         raise ProviderError(f"⚠️ No Clú: Gemini error ({r.status_code}) — try again")
 
@@ -363,11 +431,28 @@ async def identify_gemini(b64: str) -> ScreenContent:
     return _parse_json_blob(text)
 
 
+async def identify_gemini(frames: List[str],
+                          audio: Optional[Dict[str, str]] = None) -> ScreenContent:
+    if not GEMINI_API_KEY:
+        raise ProviderError("⚠️ No Clú: Gemini key missing — add GEMINI_API_KEY")
+    parts = _gemini_parts(frames, audio)
+    for model in GEMINI_MODELS:
+        try:
+            return await _gemini_once(model, parts)
+        except ModelUnavailable:
+            continue  # recoverable; a bad key or malformed request still propagates
+    raise ProviderError("⚠️ No Clú: hit the free daily limit — try again after midnight!")
+
+
 # --- Anthropic (paid) --------------------------------------------------------
-async def identify_anthropic(b64: str) -> ScreenContent:
+async def identify_anthropic(frames: List[str],
+                             audio: Optional[Dict[str, str]] = None) -> ScreenContent:
     import anthropic  # imported lazily so Gemini-only users needn't configure it
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise ProviderError("⚠️ No Clú: Anthropic key missing — add ANTHROPIC_API_KEY to server .env")
+    if not frames:
+        raise ProviderError("🔍 Couldn't read that screen — try again.")
+    b64 = frames[0]  # Anthropic path stays single-frame, no audio
     client = anthropic.AsyncAnthropic()
     try:
         response = await client.messages.parse(
@@ -396,11 +481,12 @@ async def identify_anthropic(b64: str) -> ScreenContent:
     return content
 
 
-async def identify_content(b64: str) -> ScreenContent:
+async def identify_content(frames: List[str],
+                           audio: Optional[Dict[str, str]] = None) -> ScreenContent:
     if PROVIDER == "anthropic":
-        return await identify_anthropic(b64)
+        return await identify_anthropic(frames, audio)
     if PROVIDER == "gemini":
-        return await identify_gemini(b64)
+        return await identify_gemini(frames, audio)
     raise ProviderError(f"⚠️ No Clú: unknown PROVIDER '{PROVIDER}' — use 'gemini' or 'anthropic'")
 
 
@@ -1725,7 +1811,7 @@ async def health():
 
 
 @app.post("/identify")
-async def identify(request: Request, image: UploadFile = File(...), country: Optional[str] = None):
+async def identify(request: Request, country: Optional[str] = None):
     started = time.monotonic()
     if daily_cap.exceeded:
         return {"identified": False,
@@ -1734,8 +1820,11 @@ async def identify(request: Request, image: UploadFile = File(...), country: Opt
 
     resolved_country = await resolve_country(request, country)
     try:
-        b64 = standard_b64encode(shrink(await image.read())).decode()
-        content = await identify_content(b64)
+        media = await _read_uploaded_media(request)
+        frames = _encode_frames(media["images"])
+        if not frames:
+            raise ValueError("no readable frames")
+        content = await identify_content(frames, media["audio"])
     except ProviderError as e:
         return {"identified": False, "summary": str(e),
                 "elapsed_seconds": round(time.monotonic() - started, 2)}
@@ -1793,28 +1882,49 @@ async def identify(request: Request, image: UploadFile = File(...), country: Opt
     }
 
 
-async def _read_uploaded_image(request: Request) -> Optional[bytes]:
-    """Get the screenshot bytes however the iOS Shortcut sent them.
+async def _read_uploaded_media(request: Request) -> Dict[str, object]:
+    """Collect every frame the Shortcut sent, plus any audio clip.
 
-    Accepts all three ways a Shortcut's "Get Contents of URL" can post:
-    - Request Body = File  -> raw image bytes as the whole body
-    - Request Body = Form  -> a file field (named 'image', or any field)
-    So the user doesn't have to configure the form field exactly right.
+    Accepts all the shapes a Shortcut's "Get Contents of URL" can post:
+    - Request Body = File -> raw bytes as the whole body (one frame, no audio)
+    - Request Body = Form -> any number of file fields. A part's declared
+      content type decides audio vs. frame when present and specific; the
+      field name is only consulted as a fallback when the content type is
+      missing or generic (e.g. application/octet-stream), so the Shortcut is
+      easy to build without a strict field-naming contract. A part routed
+      toward audio that turns out not to be usable audio (wrong type, too
+      big, empty) is never dropped — it falls back to being a candidate
+      frame instead, so readable input is never lost to misclassification.
     """
+    images: List[bytes] = []
+    audio: Optional[Dict[str, str]] = None
+
     ctype = request.headers.get("content-type", "")
     if "multipart/form-data" in ctype:
         form = await request.form()
-        upload = form.get("image")
-        if upload is None:  # fall back to the first file-like field of any name
-            for value in form.values():
-                if hasattr(value, "read"):
-                    upload = value
-                    break
-        if upload is not None and hasattr(upload, "read"):
-            return await upload.read()
-        return None
+        for name, value in form.multi_items():
+            if not hasattr(value, "read"):
+                continue
+            data = await value.read()
+            raw_type = (getattr(value, "content_type", "") or "").strip()
+            base_type = raw_type.split(";")[0].strip().lower()
+            if base_type and base_type != "application/octet-stream":
+                looks_like_audio = base_type.startswith("audio/")
+            else:
+                looks_like_audio = "audio" in name.lower()
+
+            used_as_audio = False
+            if looks_like_audio and audio is None:
+                clip = _usable_audio(data, raw_type)
+                if clip is not None:
+                    audio = clip
+                    used_as_audio = True
+            if not used_as_audio:
+                images.append(data)
+        return {"images": images, "audio": audio}
+
     body = await request.body()
-    return body or None
+    return {"images": [body] if body else [], "audio": None}
 
 
 @app.post("/scan", response_class=PlainTextResponse)
@@ -1830,15 +1940,17 @@ async def scan_text(request: Request, country: Optional[str] = None, token: Opti
     if daily_cap.exceeded:
         return "🌙 No Clú's free daily limit is used up — try again after midnight!"
 
-    raw = await _read_uploaded_image(request)
-    if not raw:
+    media = await _read_uploaded_media(request)
+    if not media["images"]:
         return ("🔍 No screenshot received. In the Shortcut's 'Get Contents of URL', "
-                "set Request Body to File and choose the Screenshot.")
+                "set Method to POST and Request Body to File.")
 
     resolved_country = await resolve_country(request, country)
     try:
-        b64 = standard_b64encode(shrink(raw)).decode()
-        content = await identify_content(b64)
+        frames = _encode_frames(media["images"])
+        if not frames:
+            raise ValueError("no readable frames")
+        content = await identify_content(frames, media["audio"])
     except ProviderError as e:
         return str(e)
     except Exception:
