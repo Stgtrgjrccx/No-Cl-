@@ -874,6 +874,12 @@ APP_HTML = """<!doctype html>
   </div>
 <script>
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  // "IN" -> "India", so labels don't read "streaming in IN".
+  function countryName(cc){
+    if(!cc) return '';
+    try{ return new Intl.DisplayNames(['en'],{type:'region'}).of(cc) || cc; }
+    catch(e){ return cc; }
+  }
   var mode='login';
   function setMode(m){
     mode=m;
@@ -991,7 +997,7 @@ APP_HTML = """<!doctype html>
 
     // Where to watch, in the user's region, with a tappable link per platform.
     var label=document.getElementById('watchLabel'), chips=document.getElementById('chips'), cta=document.getElementById('cta');
-    var cc=d.country||'IN';
+    var cc=countryName(d.country||'IN');
     var provs=d.providers||[];
     if(provs.length){
       label.textContent='Streaming in '+cc; label.style.display='block';
@@ -1247,6 +1253,10 @@ TITLE_HTML = """<!doctype html>
   .chips a{font-family:var(--mono);font-size:11.5px;letter-spacing:.5px;text-decoration:none;
            padding:10px 14px;border-radius:22px;border:1px solid rgba(224,165,90,.35);
            color:var(--amber-bright);background:rgba(224,165,90,.07)}
+  .grp{margin-top:16px}
+  .glabel{font-family:var(--mono);font-size:10px;letter-spacing:1px;color:var(--muted);text-transform:uppercase}
+  .grp .chips{margin-top:8px}
+  .nowhere{color:var(--faint);font-size:13.5px;line-height:1.5;margin-top:18px}
   .cta{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:16px;
        text-decoration:none;height:52px;border-radius:13px;background:var(--amber);color:#1a0f00;
        font-family:var(--mono);font-weight:700;font-size:12.5px;letter-spacing:1.5px;text-transform:uppercase}
@@ -1262,12 +1272,19 @@ TITLE_HTML = """<!doctype html>
     <div class="meta" id="meta"></div>
     <div class="detail" id="detail"></div>
     <div class="label" id="label" style="display:none"></div>
-    <div class="chips" id="chips"></div>
+    <div id="groups"></div>
+    <div class="nowhere" id="nowhere" style="display:none"></div>
     <a class="cta" id="cta" target="_blank" rel="noopener" style="display:none"></a>
   </div>
 <script>
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  // "IN" -> "India", so labels don't read "where to watch in IN".
+  function countryName(cc){
+    if(!cc) return '';
+    try{ return new Intl.DisplayNames(['en'],{type:'region'}).of(cc) || cc; }
+    catch(e){ return cc; }
+  }
   async function load(){
     var id = location.pathname.split('/').pop();
     var r;
@@ -1289,17 +1306,45 @@ TITLE_HTML = """<!doctype html>
     if(d.season && d.episode) bits.push('S'+d.season+' · E'+d.episode);
     document.getElementById('meta').textContent=bits.join('  ·  ');
     document.getElementById('detail').textContent=d.detail||'';
-    var provs=d.providers||[], label=document.getElementById('label');
-    if(provs.length){
-      label.textContent='Watch in '+(d.country||''); label.style.display='block';
-      document.getElementById('chips').innerHTML=provs.map(function(p){
+    // Where to watch, grouped so "already included in your subscription" is
+    // never mistaken for "costs money to rent".
+    // "in IN" reads like a typo — show the country's name when the browser knows it.
+    var cc=countryName(d.country||'');
+    var provs=d.providers||[], w=d.watch||{};
+    function chips(list){
+      return list.map(function(p){
         return '<a href="'+esc(p.url)+'" target="_blank" rel="noopener">'+esc(p.name)+'</a>';
       }).join('');
+    }
+    var groups=[
+      ['stream', 'Included with subscription'],
+      ['rent',   'Rent'],
+      ['buy',    'Buy']
+    ];
+    var html='';
+    groups.forEach(function(g){
+      var list=w[g[0]]||[];
+      if(list.length) html += '<div class="grp"><div class="glabel">'+g[1]+
+                              '</div><div class="chips">'+chips(list)+'</div></div>';
+    });
+    if(html){
+      document.getElementById('label').textContent='Where to watch in '+cc;
+      document.getElementById('label').style.display='block';
+      document.getElementById('groups').innerHTML=html;
+    } else if(provs.length){
+      // TMDB gave names but no category breakdown — show them ungrouped.
+      document.getElementById('label').textContent='Where to watch in '+cc;
+      document.getElementById('label').style.display='block';
+      document.getElementById('groups').innerHTML='<div class="grp"><div class="chips">'+chips(provs)+'</div></div>';
+    } else {
+      document.getElementById('nowhere').textContent =
+        'No streaming services listed for '+cc+' — try the full search below.';
+      document.getElementById('nowhere').style.display='block';
     }
     if(d.justwatch){
       var cta=document.getElementById('cta');
       cta.href=d.justwatch;
-      cta.textContent = provs.length ? 'See all options' : ('▶ Where to watch in '+(d.country||''));
+      cta.textContent = html||provs.length ? 'See all options & prices' : ('▶ Where to watch in '+cc);
       cta.style.display='flex';
     }
     document.getElementById('msg').style.display='none';
@@ -1422,6 +1467,7 @@ async def watch_options(content: ScreenContent, country: str) -> dict:
     Never raises: a detail page must still render its cover and description
     when availability lookup fails.
     """
+    buckets = {"stream": [], "rent": [], "buy": []}
     providers = []
     try:
         watch = await tmdb_where_to_watch(content, country)
@@ -1429,17 +1475,22 @@ async def watch_options(content: ScreenContent, country: str) -> dict:
             seen = set()
             for key in ("stream", "rent", "buy"):
                 for name in watch.get(key) or []:
+                    entry = {"name": name,
+                             "url": provider_link(name, content.title, country)}
+                    buckets[key].append(entry)
+                    # Flat list stays deduped across categories — a service that
+                    # both streams and sells a title should appear once there.
                     if name not in seen:
                         seen.add(name)
-                        providers.append({"name": name,
-                                          "url": provider_link(name, content.title, country)})
+                        providers.append(entry)
     except Exception:
+        buckets = {"stream": [], "rent": [], "buy": []}
         providers = []
     try:
         jw = justwatch_url(content, country)
     except Exception:
         jw = None
-    return {"providers": providers, "justwatch": jw}
+    return {"providers": providers, "watch": buckets, "justwatch": jw}
 
 
 @app.get("/api/history")
