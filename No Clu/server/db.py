@@ -62,6 +62,12 @@ class Scan(Base):
     episode = Column(Integer, nullable=True)
     poster = Column(Text, nullable=True)
     detail = Column(Text, nullable=True)
+    # How sure the model was, and what it based that on. Stored so the app can
+    # show a guess AS a guess -- previously this was computed on every scan and
+    # thrown away before display, which made a wild guess look exactly as
+    # trustworthy as a title read straight off a title card.
+    confidence = Column(String(10), nullable=True)
+    evidence = Column(Text, nullable=True)
     scanned_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="scans")
@@ -75,8 +81,17 @@ _engine = create_engine(
 SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
 
 
+# Columns added after the table first shipped, with the type each needs.
+_ADDED_SCAN_COLUMNS = (
+    ("season", "INTEGER"),
+    ("episode", "INTEGER"),
+    ("confidence", "VARCHAR(10)"),
+    ("evidence", "TEXT"),
+)
+
+
 def ensure_scan_columns(engine=None) -> None:
-    """Add nullable season/episode columns to an existing `scans` table.
+    """Add nullable columns to an existing `scans` table.
 
     SQLAlchemy's create_all() creates missing TABLES but never missing COLUMNS,
     so a table created before these columns existed needs an explicit ALTER.
@@ -97,12 +112,12 @@ def ensure_scan_columns(engine=None) -> None:
     if "scans" not in inspector.get_table_names():
         return  # create_all() will build it complete
     existing = {col["name"] for col in inspector.get_columns("scans")}
-    for name in ("season", "episode"):
+    for name, sql_type in _ADDED_SCAN_COLUMNS:
         if name in existing:
             continue
         try:
             with engine.begin() as conn:
-                conn.execute(text(f"ALTER TABLE scans ADD COLUMN {name} INTEGER"))
+                conn.execute(text(f"ALTER TABLE scans ADD COLUMN {name} {sql_type}"))
         except (OperationalError, ProgrammingError) as exc:
             message = str(exc).lower()
             if "already exists" in message or "duplicate column" in message:
@@ -192,10 +207,12 @@ def ensure_scan_token(db, user: User) -> str:
 
 # --- Scan helpers ------------------------------------------------------------
 def add_scan(db, user_id: int, *, title, content_type=None, year=None,
-             poster=None, detail=None, season=None, episode=None) -> Scan:
+             poster=None, detail=None, season=None, episode=None,
+             confidence=None, evidence=None) -> Scan:
     scan = Scan(user_id=user_id, title=title, content_type=content_type,
                 year=year, poster=poster, detail=detail,
-                season=season, episode=episode)
+                season=season, episode=episode,
+                confidence=confidence, evidence=evidence)
     db.add(scan)
     db.commit()
     return scan

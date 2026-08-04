@@ -19,7 +19,7 @@ import time
 import unicodedata
 from base64 import standard_b64encode
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 from urllib.parse import quote_plus, urlencode
 
 import httpx
@@ -100,6 +100,8 @@ ANTHROPIC_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
 # upload + processing latency, so downscale before sending.
 MAX_IMAGE_EDGE = 1920
 JPEG_QUALITY = 88
+# Row-variance (0-255 scale) below which a row is flat interface, not video.
+MIN_ROW_VARIANCE = 6.0
 MAX_FRAMES = 5
 MAX_AUDIO_BYTES = 2 * 1024 * 1024
 AUDIO_MIME_TYPES = frozenset({"audio/mp4", "audio/m4a", "audio/x-m4a",
@@ -114,11 +116,31 @@ progress bars, watermarks, scoreboards).
 Rules:
 - You may be given SEVERAL frames captured a second apart from the same video, \
 and sometimes a short audio clip. Treat them as one piece of content, not several.
-- Trust signals in this order: (1) on-screen text — titles, episode labels, \
-player UI, and burned-in caption or sticker text; (2) audio — dialogue, lyrics, \
-commentary; (3) visual recognition of faces or scenery.
-- Read any overlaid caption or sticker text carefully. On short-form clips it \
-often names the film or show outright.
+
+- LOOK BEFORE YOU READ. Study the picture first and form a view from it alone: \
+who is on screen (lead and supporting cast), the setting and location, the \
+period and costuming, the cinematography and colour grade, the language implied \
+by lip movement and signage. Only after that, read any text. Use the text to \
+CONFIRM or CORRECT what you saw — never let text alone decide while you ignore \
+the picture.
+
+- Text is not all equal. Text belonging to the PLAYER or the content — a title \
+card, Netflix/Prime/YouTube chrome, an episode label, official credits — is \
+strong evidence. Text belonging to whoever POSTED the clip is not: compilation \
+headers ("Best Bollywood Movies"), part numbers ("PART:173"), account handles \
+("@movixo._"), hashtags and viewer comments describe the post, not the film. \
+Never take those as the title.
+
+- RECOGNISING AN ACTOR IS NOT IDENTIFYING THE FILM. Actors appear in many \
+films. If you recognise a face but cannot confirm which specific title THIS \
+scene comes from, you MUST set confidence to "low" and name the actor in detail \
+instead of choosing a title from their filmography. Naming the wrong film is far \
+worse than admitting you are unsure.
+
+- Use "high" only when the title is written on screen, or the specific scene is \
+unmistakable to you. Knowing WHO is in it is not knowing WHAT it is — that is \
+"low". Use "medium" when several strong visual signals agree but no text confirms.
+
 - If the picture and the audio disagree, say so in detail and lower confidence \
 rather than inventing a compromise answer.
 - Give the official title, not a description of the scene.
@@ -129,6 +151,10 @@ from the scene; otherwise leave them null.
 - If you genuinely cannot identify it, set content_type to "other", title to your best \
 guess of what kind of content it is, and confidence to "low".
 - detail: one short sentence of context (what scene / why you're confident / what gave it away).
+- evidence: the ONE specific thing your answer rests on, stated plainly — \
+"title card reads Jawan", "Netflix player shows S2:E5", or "Saif Ali Khan, \
+specific film not identified". If the honest answer is a face and nothing more, \
+say exactly that, and set confidence to "low".
 
 Respond with ONLY a JSON object (no markdown, no code fences) with exactly these keys:
   content_type: one of "movie","tv_show","anime","youtube_video","sports","music_video","game","other"
@@ -138,6 +164,7 @@ Respond with ONLY a JSON object (no markdown, no code fences) with exactly these
   episode: integer or null
   confidence: one of "high","medium","low"
   detail: string
+  evidence: string
 """
 
 
@@ -152,6 +179,11 @@ class ScreenContent(BaseModel):
     episode: Optional[int] = None
     confidence: Literal["high", "medium", "low"] = "low"
     detail: str = ""
+    # What the answer actually rests on. Naming the evidence out loud is what
+    # makes the confidence auditable instead of decorative — a model that has
+    # to write "Saif Ali Khan, specific film not identified" is much less
+    # willing to also claim "high".
+    evidence: str = ""
 
 
 # Strict shape Gemini must return — prevents malformed/truncated JSON.
@@ -167,10 +199,15 @@ GEMINI_SCHEMA = {
         "episode": {"type": "integer", "nullable": True},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "detail": {"type": "string"},
+        "evidence": {"type": "string"},
     },
-    "required": ["content_type", "title", "confidence", "detail"],
+    "required": ["content_type", "title", "confidence", "detail", "evidence"],
+    # evidence is ordered BEFORE confidence on purpose: the model fills fields in
+    # this order, so it must commit to what it actually saw before it grades how
+    # sure it is. Grading first and justifying afterwards is how "high" got
+    # attached to a face it merely recognised.
     "propertyOrdering": ["content_type", "title", "year", "season",
-                         "episode", "confidence", "detail"],
+                         "episode", "evidence", "confidence", "detail"],
 }
 
 
@@ -216,9 +253,100 @@ class DailyCap:
 daily_cap = DailyCap(limit=int(os.getenv("DAILY_SCAN_CAP", "100")))
 
 
+def _video_band(img: "Image.Image") -> Optional[Tuple[int, int]]:
+    """The (top, bottom) rows holding the actual video in a phone screenshot.
+
+    A Reel screenshot is mostly app furniture: status bar, like/comment/share
+    rail, avatar, caption, comment box. Measured on real failing screenshots,
+    the film itself is only 35-38% of the frame — so scaling the whole picture
+    down to the size cap spent two thirds of the budget on Instagram's UI and
+    left the faces we need to recognise at a third of their possible detail.
+
+    Found by row colour-variance: interface rows are flat, film rows are not.
+    Returns None when the result cannot be trusted, and the caller falls back.
+    """
+    small = img.convert("RGB")
+    small.thumbnail((160, 320))          # detection needs shape, not detail
+    w, h = small.size
+    if h < 40:
+        return None
+    px = small.load()
+    rows = []
+    for y in range(h):
+        vals = [sum(px[x, y]) / 3.0 for x in range(w)]
+        mean = sum(vals) / w
+        rows.append((sum((v - mean) ** 2 for v in vals) / w) ** 0.5)
+
+    # An absolute floor as well as a relative one. A purely relative threshold
+    # is meaningless on a flat frame: float noise makes every row's variance
+    # ~7e-15, the cutoff ~2e-15, and every row then reads as "busy" — handing
+    # back an 87% band for a picture containing no video whatsoever.
+    peak = max(rows)
+    if peak < MIN_ROW_VARIANCE:
+        return None                       # nothing here looks like video
+    cutoff = max(peak * 0.35, MIN_ROW_VARIANCE)
+    busy = [r > cutoff for r in rows]
+    for y in range(int(h * 0.06)):       # status bar / notification zone
+        busy[y] = False
+    for y in range(int(h * 0.93), h):    # comment box
+        busy[y] = False
+
+    best = run = None
+    for y in range(h + 1):
+        if y < h and busy[y]:
+            run = y if run is None else run
+        elif run is not None:
+            if best is None or (y - run) > (best[1] - best[0]):
+                best = (run, y)
+            run = None
+    if best is None:
+        return None
+    # A dark clip has little row variance and yields a uselessly thin band —
+    # measured at 3.9% of frame height on one real screenshot. Sending a bad
+    # crop is worse than sending none, so reject it and let the caller default.
+    if (best[1] - best[0]) < h * 0.20:
+        return None
+    scale = img.size[1] / h
+    return int(best[0] * scale), int(best[1] * scale)
+
+
+def _crop_to_content(img: "Image.Image") -> "Image.Image":
+    """Trim a tall phone screenshot down to the video inside it.
+
+    Only applied to portrait frames taller than 1.6:1 — that shape is a phone
+    screenshot. A landscape TV grab is left whole, because there the title can
+    legitimately sit outside the picture area.
+    """
+    w, h = img.size
+    if h < w * 1.6:
+        return img
+    band = _video_band(img)
+    if band is None:
+        band = (int(h * 0.22), int(h * 0.78))   # safe default, never skipped
+    top, bottom = band
+    return img.crop((0, top, w, bottom))
+
+
 def shrink(raw: bytes) -> bytes:
+    """Prepare one frame for the vision model.
+
+    Crops away phone chrome, then scales to the size cap. Deliberately does NOT
+    re-encode an image that is already a small JPEG: the previous version always
+    saved at quality 88, which on a re-compressed Reel screenshot made every
+    single test file LARGER while stacking a second generation of artifacts on
+    top of Instagram's. Spending bandwidth to damage the picture is the worst of
+    both.
+    """
     img = Image.open(io.BytesIO(raw))
-    img.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE))
+    original = img.size
+    img = _crop_to_content(img)
+    cropped = img.size != original
+
+    fits = max(img.size) <= MAX_IMAGE_EDGE
+    if not cropped and fits and (img.format or "").upper() == "JPEG":
+        return raw  # already small enough, and re-encoding could only hurt it
+
+    img.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE))   # never upscales
     if img.mode != "RGB":
         img = img.convert("RGB")
     out = io.BytesIO()
@@ -1624,6 +1752,14 @@ TITLE_HTML = """<!doctype html>
   .meta{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--cyan-soft);
         margin-top:8px;text-transform:uppercase;text-shadow:0 0 12px rgba(0,229,255,.5)}
   .detail{color:var(--muted);font-size:14.5px;line-height:1.55;margin-top:14px}
+  /* An uncertain answer has to LOOK uncertain. Amber, not the pink or cyan the
+     rest of the app uses, so it reads as a caution rather than as decoration. */
+  .unsure{display:none;margin-top:14px;padding:12px 14px;border-radius:13px;
+          background:rgba(255,176,46,.1);border:1px solid rgba(255,176,46,.42)}
+  .unsure.show{display:block}
+  .unsure b{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;
+            text-transform:uppercase;color:#FFC96B;margin-bottom:5px}
+  .unsure span{font-size:13.5px;line-height:1.5;color:var(--ink)}
   .label{font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;color:var(--faint);
          text-transform:uppercase;margin-top:26px}
   .chips{display:flex;flex-wrap:wrap;gap:9px;margin-top:11px}
@@ -1662,6 +1798,7 @@ TITLE_HTML = """<!doctype html>
     <img class="cover" id="cover" alt="">
     <h1 id="ttl"></h1>
     <div class="meta" id="meta"></div>
+    <div class="unsure" id="unsure"><b>Best guess</b><span id="unsureWhy"></span></div>
     <div class="detail" id="detail"></div>
     <a class="primary-action" id="primaryAction" target="_blank" rel="noopener" style="display:none">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 2l9 5-9 5V2z" fill="#FFFFFF"></path></svg>
@@ -1701,6 +1838,16 @@ TITLE_HTML = """<!doctype html>
     if(d.year) bits.push(d.year);
     if(d.season && d.episode) bits.push('S'+d.season+' · E'+d.episode);
     document.getElementById('meta').textContent=bits.join('  ·  ');
+    // Show a guess AS a guess, and say what it rested on. Scans saved before
+    // confidence was stored have none, and get no badge rather than a wrong one.
+    // Medium counts as unsure: over 12 measured runs the only confidently-wrong
+    // answer left was a "medium" one. Only "high" — a title read off the screen
+    // or an unmistakable scene — goes unbadged.
+    if(d.confidence === 'low' || d.confidence === 'medium'){
+      document.getElementById('unsureWhy').textContent = d.evidence ||
+        'The picture alone was not enough to be sure of the title.';
+      document.getElementById('unsure').classList.add('show');
+    }
     document.getElementById('detail').textContent=d.detail||'';
     // Where to watch, grouped so "already included in your subscription" is
     // never mistaken for "costs money to rent".
@@ -1964,6 +2111,10 @@ def _scan_to_dict(scan) -> dict:
         "episode": scan.episode,
         "poster": scan.poster,
         "detail": scan.detail,
+        # Older rows predate these columns and read as None, which the UI
+        # treats the same as "high" — no badge on scans we can't grade.
+        "confidence": getattr(scan, "confidence", None),
+        "evidence": getattr(scan, "evidence", None),
         "at": scan.scanned_at.isoformat() if scan.scanned_at else None,
     }
 
@@ -2194,7 +2345,8 @@ async def identify(request: Request, country: Optional[str] = None):
             try:
                 db.add_scan(session, uid, title=content.title, content_type=content.content_type,
                             year=content.year, poster=poster, detail=content.detail,
-                            season=content.season, episode=content.episode)
+                            season=content.season, episode=content.episode,
+                            confidence=content.confidence, evidence=content.evidence)
             finally:
                 session.close()
         except Exception:
