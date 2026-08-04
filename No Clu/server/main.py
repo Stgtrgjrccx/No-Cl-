@@ -808,10 +808,6 @@ APP_HTML = """<!doctype html>
   body{background:var(--bg);color:var(--ink);font-family:var(--sans);
        min-height:100dvh;display:flex;flex-direction:column;
        padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);-webkit-font-smoothing:antialiased}
-  @keyframes spinCW{from{transform:translate(-50%,-50%) rotate(45deg)}to{transform:translate(-50%,-50%) rotate(405deg)}}
-  @keyframes spinCCW{from{transform:translate(-50%,-50%) rotate(45deg)}to{transform:translate(-50%,-50%) rotate(-315deg)}}
-  @keyframes pulseRing{0%{transform:translate(-50%,-50%) rotate(45deg) scale(.5);opacity:.8}100%{transform:translate(-50%,-50%) rotate(45deg) scale(2.6);opacity:0}}
-  @keyframes coreGlow{0%,100%{box-shadow:0 0 22px 4px rgba(224,165,90,.45)}50%{box-shadow:0 0 34px 8px rgba(224,165,90,.7)}}
   @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
   .brand{font-family:var(--mono);font-weight:700;letter-spacing:3px;color:var(--amber);text-shadow:0 0 14px rgba(224,165,90,.55)}
 
@@ -847,18 +843,101 @@ APP_HTML = """<!doctype html>
   .status{font-family:var(--mono);font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--muted);
           margin:14px 0 26px;transition:color .3s;min-height:14px}
   .status.on{color:var(--amber-bright)}
-  .stage{position:relative;width:224px;height:224px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-  .ring{position:absolute;top:50%;left:50%;border:1.4px dashed var(--amber);border-radius:26px;opacity:.4}
-  .ring.a{width:204px;height:204px;animation:spinCW 14s linear infinite}
-  .ring.b{width:168px;height:168px;border-width:1px;opacity:.28;animation:spinCCW 18s linear infinite}
-  .stage.scan .ring.a{animation-duration:3.4s}.stage.scan .ring.b{animation-duration:4.4s}
-  .pulse{position:absolute;top:50%;left:50%;width:150px;height:150px;border-radius:30px;border:1.5px solid var(--amber);opacity:0}
-  .pulse.fire{animation:pulseRing 1s ease-out}
-  .lens{position:relative;width:150px;height:150px;transform:rotate(45deg);border-radius:30px;border:1px solid rgba(224,165,90,.3);
-        background:rgba(244,241,234,.03);display:flex;align-items:center;justify-content:center;cursor:pointer}
-  .pupil{width:54px;height:54px;border-radius:16px;transform:rotate(45deg);
-         background:radial-gradient(circle at 36% 32%,var(--amber-bright),var(--amber) 70%);animation:coreGlow 2.4s ease-in-out infinite}
-  .stage.scan .pupil{animation:none;background:radial-gradient(circle at 36% 32%,#fff,var(--amber-bright) 70%)}
+  /* ---- the prism lens: a 5.4s prism-led sequence -----------------------
+     Fold edge-on, wind down, collapse to a white point, then refract out as a
+     spectrum. `.on` is set on .stage (an ANCESTOR of .pi), so every state rule
+     must read `.stage.on .pi ...` — putting both classes on one selector
+     silently disables the whole animation. -------------------------------- */
+  /* The blades travel ~186% of their own size and deliberately overflow the
+     stage — clipping them mid-flight looks broken, and `overflow:hidden` is
+     defeated by preserve-3d anyway. The stage just reserves the vertical
+     space so they never land on the status text or the history list. */
+  .stage{position:relative;width:min(300px,86vw);aspect-ratio:1;display:flex;align-items:center;
+         justify-content:center;flex-shrink:0}
+  .pi{position:relative;display:grid;place-items:center;width:150px;height:150px;
+      perspective:760px;cursor:pointer;-webkit-tap-highlight-color:transparent;
+      opacity:1;transition:opacity .3s ease}
+  .pi>*{position:absolute;pointer-events:none}
+  .halo{inset:-26%;border-radius:50%;opacity:.5;
+        background:radial-gradient(circle,rgba(224,165,90,.2),transparent 62%)}
+  .prism-rim{inset:0;border-radius:26%;opacity:.28;transform:rotate(45deg);
+    background:conic-gradient(from 210deg,rgba(155,107,255,.6),rgba(224,165,90,.5),
+      rgba(123,227,192,.6),rgba(143,212,255,.5),rgba(155,107,255,.6));
+    -webkit-mask:radial-gradient(circle,transparent 62%,#000 64%);
+            mask:radial-gradient(circle,transparent 62%,#000 64%)}
+  .prog{inset:-15%;border-radius:50%;opacity:0;
+        background:conic-gradient(rgba(143,212,255,.5) 0deg,transparent 0deg)}
+  .shards{inset:0;transform:rotate(45deg);transform-style:preserve-3d}
+  .sh{position:absolute;left:50%;top:50%;width:52%;height:52%;transform-origin:0 0;overflow:hidden;
+    background:linear-gradient(140deg,rgba(255,255,255,.46),rgba(255,255,255,.10) 46%,rgba(255,255,255,.28));
+    backdrop-filter:blur(13px) saturate(210%);-webkit-backdrop-filter:blur(13px) saturate(210%);
+    border:.5px solid rgba(255,255,255,.46);border-radius:3px 22% 3px 3px;
+    box-shadow:inset 0 1.5px 0 rgba(255,255,255,.72),0 8px 20px rgba(0,0,0,.42)}
+  .sh:before{content:"";position:absolute;inset:0;background:var(--c,#fff);opacity:0;mix-blend-mode:screen}
+  .sh:after{content:"";position:absolute;inset:0;opacity:.6;
+    box-shadow:inset 1.5px 0 0 rgba(155,107,255,.6),inset -1.5px 0 0 rgba(123,227,192,.6)}
+  .sh:nth-child(1){transform:translate(-100%,-100%)}
+  .sh:nth-child(2){transform:translate(0,-100%) rotate(90deg)}
+  .sh:nth-child(3){transform:translate(0,0) rotate(180deg)}
+  .sh:nth-child(4){transform:translate(-100%,0) rotate(270deg)}
+  .core{width:26%;height:26%;border-radius:50%;transform:scale(.6);
+    background:radial-gradient(circle at 36% 30%,#FFF6E4,var(--amber) 66%);
+    box-shadow:0 0 22px 4px rgba(224,165,90,.5)}
+  .beam{left:50%;top:50%;width:3px;height:52%;transform-origin:50% 0;opacity:0;border-radius:2px;
+        transform:rotate(var(--a)) scaleY(.1)}
+  .flash{inset:-8%;border-radius:50%;opacity:0;background:radial-gradient(circle,#fff,transparent 58%)}
+
+  .stage.on .shards{animation:pl_cl 5.4s cubic-bezier(.22,.9,.28,1) forwards}
+  @keyframes pl_cl{0%{transform:rotate(45deg) rotateX(0) scale(1)}
+    14%{transform:rotate(45deg) rotateX(72deg)}
+    30%{transform:rotate(280deg) rotateX(72deg) scale(.4)}
+    38%{transform:rotate(340deg) rotateX(72deg) scale(.1)}
+    48%{transform:rotate(370deg) rotateX(26deg) scale(1.06)}
+    100%{transform:rotate(400deg) rotateX(0) scale(1)}}
+  .stage.on .sh{animation:pl_sh 5.4s cubic-bezier(.22,.9,.28,1) forwards}
+  .stage.on .sh:nth-child(2){animation-name:pl_sh2}
+  .stage.on .sh:nth-child(3){animation-name:pl_sh3}
+  .stage.on .sh:nth-child(4){animation-name:pl_sh4}
+  @keyframes pl_sh{0%,38%{transform:translate(-100%,-100%)}
+    100%{transform:translate(-186%,-158%) rotateY(38deg)}}
+  @keyframes pl_sh2{0%,38%{transform:translate(0,-100%) rotate(90deg)}
+    100%{transform:translate(106%,-186%) rotate(90deg) rotateY(38deg)}}
+  @keyframes pl_sh3{0%,38%{transform:translate(0,0) rotate(180deg)}
+    100%{transform:translate(158%,106%) rotate(180deg) rotateY(38deg)}}
+  @keyframes pl_sh4{0%,38%{transform:translate(-100%,0) rotate(270deg)}
+    100%{transform:translate(-186%,158%) rotate(270deg) rotateY(38deg)}}
+  .stage.on .sh:before{animation:pl_tint 5.4s cubic-bezier(.22,.9,.28,1) forwards}
+  @keyframes pl_tint{0%,36%{opacity:0}48%{opacity:.85}100%{opacity:.5}}
+  .stage.on .core{animation:pl_core 5.4s cubic-bezier(.22,.9,.28,1) forwards}
+  @keyframes pl_core{0%{transform:scale(.6)}
+    34%{transform:scale(.1);background:radial-gradient(circle,#fff,#fff)}
+    42%{transform:scale(1.9);box-shadow:0 0 80px 26px rgba(255,255,255,.9)}
+    56%{transform:scale(.85);background:radial-gradient(circle at 36% 30%,#fff,#FF7A8A 60%)}
+    100%{transform:scale(1.1);background:radial-gradient(circle at 36% 30%,#fff,var(--amber) 62%);
+      box-shadow:0 0 52px 13px rgba(224,165,90,.55)}}
+  /* the flash is softened from the mockup — a full-white frame is harsh at night */
+  .stage.on .flash{animation:pl_flash 5.4s linear forwards}
+  @keyframes pl_flash{0%,34%{opacity:0;transform:scale(.3)}
+    40%{opacity:.6;transform:scale(1)}50%{opacity:0;transform:scale(1.7)}100%{opacity:0}}
+  .stage.on .beam{animation:pl_beam 5.4s cubic-bezier(.22,.9,.28,1) forwards;
+                  animation-delay:calc(2.1s + var(--d,0s))}
+  @keyframes pl_beam{0%{opacity:0;transform:rotate(var(--a)) scaleY(.06)}
+    8%{opacity:1;transform:rotate(var(--a)) scaleY(1.05)}
+    50%{opacity:.9;transform:rotate(calc(var(--a) + 30deg)) scaleY(1.3)}
+    100%{opacity:0;transform:rotate(calc(var(--a) + 48deg)) scaleY(1.4)}}
+  .stage.on .halo{animation:pl_halo 5.4s cubic-bezier(.22,.9,.28,1) forwards}
+  @keyframes pl_halo{0%{opacity:.5;transform:scale(1)}16%{opacity:.18;transform:scale(.84)}
+    50%{opacity:.4}62%{opacity:1;transform:scale(1.16)}100%{opacity:.9;transform:scale(1)}}
+  .stage.on .prism-rim{animation:pl_rim 5.4s cubic-bezier(.4,0,.2,1) forwards}
+  @keyframes pl_rim{0%{opacity:.28;transform:rotate(45deg)}14%{opacity:.12;transform:rotate(24deg)}
+    52%{opacity:.7;transform:rotate(560deg)}100%{opacity:.85;transform:rotate(700deg)}}
+  .stage.on .prog{animation:pl_prog 5.4s linear forwards}
+  @keyframes pl_prog{0%{opacity:0}5%{opacity:.7}
+    93%{opacity:.5;background:conic-gradient(rgba(143,212,255,.5) 360deg,transparent 360deg)}
+    100%{opacity:0;background:conic-gradient(rgba(143,212,255,.5) 360deg,transparent 360deg)}}
+  /* closing: the open form contracts away, then the closed diamond fades back */
+  .stage.closing .pi{animation:pl_collapse .8s cubic-bezier(.22,.9,.28,1) forwards}
+  @keyframes pl_collapse{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(.84)}}
   .connect{width:100%;margin-top:34px;background:var(--card);border:1px solid rgba(224,165,90,.2);border-radius:16px;padding:18px}
   .connect h2{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--amber-bright);text-transform:uppercase;margin-bottom:8px}
   .connect p{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px}
@@ -944,9 +1023,22 @@ APP_HTML = """<!doctype html>
     <main>
       <div class="status" id="status">Tap the lens</div>
       <div class="stage" id="stage">
-        <div class="ring a"></div><div class="ring b"></div>
-        <div class="pulse" id="pulse"></div>
-        <div class="lens" id="lens"><div class="pupil"></div></div>
+        <div class="pi" id="lens">
+          <div class="halo"></div><div class="prog"></div><div class="prism-rim"></div>
+          <div class="shards">
+            <i class="sh" style="--c:#FF5E6B"></i><i class="sh" style="--c:#FFC04D"></i>
+            <i class="sh" style="--c:#7BE3C0"></i><i class="sh" style="--c:#8FD4FF"></i>
+          </div>
+          <div class="flash"></div><div class="core"></div>
+          <div class="beam" style="--a:-45deg;--d:0s;background:linear-gradient(#FF5E6B,transparent)"></div>
+          <div class="beam" style="--a:-27deg;--d:.05s;background:linear-gradient(#FF9F45,transparent)"></div>
+          <div class="beam" style="--a:-9deg;--d:.1s;background:linear-gradient(#FFE86B,transparent)"></div>
+          <div class="beam" style="--a:9deg;--d:.15s;background:linear-gradient(#7BE3C0,transparent)"></div>
+          <div class="beam" style="--a:27deg;--d:.2s;background:linear-gradient(#8FD4FF,transparent)"></div>
+          <div class="beam" style="--a:45deg;--d:.25s;background:linear-gradient(#9B6BFF,transparent)"></div>
+          <div class="beam" style="--a:135deg;--d:.3s;background:linear-gradient(#FF5E6B,transparent)"></div>
+          <div class="beam" style="--a:225deg;--d:.35s;background:linear-gradient(#8FD4FF,transparent)"></div>
+        </div>
       </div>
       <div class="recent" id="recentWrap" style="display:none">
         <h2>Recent scans</h2>
@@ -1054,14 +1146,25 @@ APP_HTML = """<!doctype html>
   // lens between idle and active and plays the pulse — it makes no claim to be
   // scanning, so it can't mislead.
   var lens=document.getElementById('lens'), stage=document.getElementById('stage'),
-      statusEl=document.getElementById('status'), pulse=document.getElementById('pulse');
-  var lensOn=false;
-  function firePulse(){ pulse.classList.remove('fire'); void pulse.offsetWidth; pulse.classList.add('fire'); }
+      statusEl=document.getElementById('status');
+  var lensBusy=false;
   function toggleLens(){
-    lensOn=!lensOn;
-    stage.classList.toggle('scan', lensOn);
-    statusEl.classList.toggle('on', lensOn);
-    if(lensOn) firePulse();
+    // Locked while closing so a second tap can't strand it half-open.
+    if(lensBusy) return;
+    if(stage.classList.contains('on')){
+      lensBusy=true;
+      stage.classList.add('closing');
+      statusEl.classList.remove('on');
+      statusEl.textContent='Tap the lens';
+      setTimeout(function(){
+        stage.classList.remove('on','closing');
+        lensBusy=false;
+      }, 820);
+    } else {
+      stage.classList.add('on');
+      statusEl.classList.add('on');
+      statusEl.textContent='Tap again to close';
+    }
   }
   lens.addEventListener('click', toggleLens);
 
