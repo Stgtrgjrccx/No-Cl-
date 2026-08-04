@@ -797,6 +797,12 @@ STRENGTH_FRONTIER = 3     # escalation target
 MODEL_COOLDOWN_SECONDS = 300
 _model_cooldown: Dict[str, float] = {}
 
+# Why each provider last failed — status codes only, never response bodies.
+# A provider that fails silently is worse than one that is absent: escalation
+# looked configured and healthy for hours while never once being consulted,
+# because a failure and a cooldown are indistinguishable from the outside.
+_provider_last_error: Dict[str, str] = {}
+
 
 def _on_cooldown(label: str) -> bool:
     until = _model_cooldown.get(label)
@@ -842,8 +848,9 @@ async def _best_of(attempts) -> ScreenContent:
             continue
         try:
             result = await attempt()
-        except ModelUnavailable:
+        except ModelUnavailable as exc:
             _model_cooldown[label] = time.monotonic() + MODEL_COOLDOWN_SECONDS
+            _provider_last_error[label] = str(exc)
             continue   # out of quota, withdrawn, or a bad key on an optional extra
         # Confidence first, model strength only as the tie-break: a weaker model
         # being surer of itself does not make it right.
@@ -2552,7 +2559,8 @@ async def health():
     # without the key itself ever leaving the dashboard it was pasted into.
     return {"app": "No Clú", "provider": PROVIDER, "key_configured": key_present,
             "tmdb": bool(TMDB_API_KEY), "default_country": DEFAULT_COUNTRY,
-            "extra_providers": [p["label"] for p in _extra_providers()]}
+            "extra_providers": [p["label"] for p in _extra_providers()],
+            "provider_errors": dict(_provider_last_error)}
 
 
 @app.post("/identify")
