@@ -217,8 +217,16 @@ guess of what kind of content it is, and confidence to "low".
 - detail: one short sentence of context (what scene / why you're confident / what gave it away).
 - evidence: the ONE specific thing your answer rests on, stated plainly — \
 "title card reads Jawan", "Netflix player shows S2:E5", or "Saif Ali Khan, \
-specific film not identified". If the honest answer is a face and nothing more, \
-say exactly that, and set confidence to "low".
+specific film not identified".
+- evidence_type: which KIND of evidence that was. Choose honestly:
+    "title_text"  — the title itself is written on screen
+    "player_ui"   — a player/app shows the title or episode
+    "scene"       — no text, but you recognise THIS SPECIFIC SCENE or shot
+    "person_only" — you recognise a face or voice but not which title it is from
+    "none"        — neither
+  Choosing "person_only" is not a failure; it is the correct, useful answer \
+whenever you know WHO but not WHAT. Recognising an actor and then naming any \
+film from their filmography is the single worst thing you can do here.
 
 Respond with ONLY a JSON object (no markdown, no code fences) with exactly these keys:
   content_type: one of "movie","tv_show","anime","youtube_video","sports","music_video","game","other"
@@ -229,6 +237,7 @@ Respond with ONLY a JSON object (no markdown, no code fences) with exactly these
   confidence: one of "high","medium","low"
   detail: string
   evidence: string
+  evidence_type: one of "title_text","player_ui","scene","person_only","none"
 """
 
 
@@ -248,6 +257,8 @@ class ScreenContent(BaseModel):
     # to write "Saif Ali Khan, specific film not identified" is much less
     # willing to also claim "high".
     evidence: str = ""
+    evidence_type: Literal[
+        "title_text", "player_ui", "scene", "person_only", "none"] = "none"
 
 
 # Strict shape Gemini must return — prevents malformed/truncated JSON.
@@ -264,14 +275,17 @@ GEMINI_SCHEMA = {
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "detail": {"type": "string"},
         "evidence": {"type": "string"},
+        "evidence_type": {"type": "string", "enum": [
+            "title_text", "player_ui", "scene", "person_only", "none"]},
     },
-    "required": ["content_type", "title", "confidence", "detail", "evidence"],
+    "required": ["content_type", "title", "confidence", "detail",
+                 "evidence", "evidence_type"],
     # evidence is ordered BEFORE confidence on purpose: the model fills fields in
     # this order, so it must commit to what it actually saw before it grades how
     # sure it is. Grading first and justifying afterwards is how "high" got
     # attached to a face it merely recognised.
-    "propertyOrdering": ["content_type", "title", "year", "season",
-                         "episode", "evidence", "confidence", "detail"],
+    "propertyOrdering": ["content_type", "title", "year", "season", "episode",
+                         "evidence", "evidence_type", "confidence", "detail"],
 }
 
 
@@ -732,10 +746,33 @@ async def _gemini_once(model: str, parts: List[dict]) -> ScreenContent:
         text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
     except (KeyError, IndexError, ValueError):
         raise ProviderError("🔍 Gemini didn't return a result — try again.")
-    return _parse_json_blob(text)
+    return _cap_confidence(_parse_json_blob(text))
 
 
 CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
+
+# The most a model is ALLOWED to claim, given what it says it actually had.
+# Asking politely does not work: with the rule written in the prompt, all three
+# real screenshots still came back medium-or-high on evidence that read "The
+# actress Pooja Hegde is clearly visible in this frame" — recognising a face
+# and then naming a film from her filmography, which is the exact failure the
+# rule forbids. A ceiling applied in code is not optional, so it holds for
+# every provider including the ones that ignore instructions.
+EVIDENCE_CEILING = {
+    "title_text": "high",    # the title is written on screen — nothing beats that
+    "player_ui": "high",     # the player names it
+    "scene": "medium",       # a specific scene recognised, but nothing confirms it
+    "person_only": "low",    # knowing WHO is not knowing WHAT
+    "none": "low",
+}
+
+
+def _cap_confidence(content: ScreenContent) -> ScreenContent:
+    """Lower a claim the stated evidence cannot support. Never raises it."""
+    ceiling = EVIDENCE_CEILING.get(content.evidence_type, "low")
+    if CONFIDENCE_RANK.get(content.confidence, 0) <= CONFIDENCE_RANK[ceiling]:
+        return content
+    return content.model_copy(update={"confidence": ceiling})
 
 # How far a model's judgement is trusted when two answers are equally confident.
 # Position in the chain is about SPEED, not authority, so strength is declared
@@ -887,7 +924,7 @@ async def _openai_compatible_once(provider: Dict[str, str],
         text = r.json()["choices"][0]["message"]["content"]
     except (KeyError, IndexError, ValueError):
         raise ModelUnavailable(f"{provider['label']} returned no usable content")
-    return _parse_json_blob(text)
+    return _cap_confidence(_parse_json_blob(text))
 
 
 async def identify_anthropic(frames: List[str],
@@ -2582,6 +2619,7 @@ async def identify(request: Request, country: Optional[str] = None):
         "confidence": content.confidence,
         "detail": content.detail,
         "evidence": content.evidence,
+        "evidence_type": content.evidence_type,
         "country": resolved_country,
         # NOTE: `watch` here is TMDB's RAW dict (plain provider-name strings),
         # which /demo renders. /api/title's `watch` is the grouped, linked shape
