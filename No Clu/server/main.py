@@ -900,6 +900,23 @@ async def identify_gemini(frames: List[str],
 
 
 # --- Anthropic (paid) --------------------------------------------------------
+def _why(response: "httpx.Response") -> str:
+    """A short, safe slice of a provider's error message.
+
+    Truncated hard, and anything token-shaped is dropped — this surfaces on the
+    public health endpoint, so it must carry a diagnosis and nothing else.
+    """
+    try:
+        body = response.json()
+        message = body.get("error", {})
+        message = message.get("message") if isinstance(message, dict) else str(message)
+    except Exception:
+        message = response.text
+    message = " ".join(str(message or "").split())[:160]
+    return " ".join(w for w in message.split()
+                    if not any(w.startswith(p) for p in ("ghp_", "github_pat_", "gsk_", "Bearer")))
+
+
 async def _openai_compatible_once(provider: Dict[str, str],
                                   frames: List[str]) -> ScreenContent:
     """One attempt against any OpenAI-compatible vision endpoint.
@@ -941,7 +958,13 @@ async def _openai_compatible_once(provider: Dict[str, str],
         # Everything is recoverable here, including 401/403: these providers are
         # optional extras, so a bad key must degrade to the next one silently
         # rather than surface as a failed scan.
-        raise ModelUnavailable(f"{provider['label']} unavailable (HTTP {r.status_code})")
+        #
+        # Carry a short slice of the provider's own message. A bare status code
+        # cost real time tonight: "400" alone cannot distinguish an unsupported
+        # response_format from a malformed image part, and "401" cannot
+        # distinguish a wrong token from a missing permission.
+        raise ModelUnavailable(
+            f"{provider['label']} unavailable (HTTP {r.status_code}) {_why(r)}")
     try:
         text = r.json()["choices"][0]["message"]["content"]
     except (KeyError, IndexError, ValueError):
