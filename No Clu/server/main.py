@@ -121,10 +121,14 @@ ANTHROPIC_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
 GITHUB_MODELS_TOKEN = os.getenv("GITHUB_MODELS_TOKEN", "").strip()
 GITHUB_MODELS_MODEL = os.getenv("GITHUB_MODELS_MODEL", "gpt-4o,gpt-4o-mini")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+# Groq's vision line-up churns fast: both Llama 4 vision ids I tried returned
+# 404 (scout was deprecated in June, maverick renamed). Per Groq's own vision
+# docs the current multimodal model is qwen3.6-27b; the Llama ids stay behind it
+# in case an account still has them.
 GROQ_MODEL = os.getenv(
     "GROQ_MODEL",
-    "meta-llama/llama-4-scout-17b-16e-instruct,"
-    "meta-llama/llama-4-maverick-17b-128e-instruct")
+    "qwen/qwen3.6-27b,"
+    "meta-llama/llama-4-scout-17b-16e-instruct")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "pixtral-12b-2409,pixtral-large-latest")
 
