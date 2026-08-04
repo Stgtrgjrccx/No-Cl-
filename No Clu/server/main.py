@@ -730,29 +730,65 @@ async def _gemini_once(model: str, parts: List[dict]) -> ScreenContent:
 
 CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 
+# A model that just reported "out of quota" will almost certainly say the same
+# on the next scan, so re-asking wastes a round trip on EVERY subsequent scan.
+# Five minutes is a deliberate middle: long enough that a daily-exhausted model
+# stops being asked once per scan, short enough to recover quickly from a
+# per-minute limit (Groq's free tier is 30/min), and self-healing without any
+# knowledge of which kind of limit was hit.
+MODEL_COOLDOWN_SECONDS = 300
+_model_cooldown: Dict[str, float] = {}
+
+
+def _on_cooldown(label: str) -> bool:
+    until = _model_cooldown.get(label)
+    if until is None:
+        return False
+    if time.monotonic() >= until:
+        del _model_cooldown[label]
+        return False
+    return True
+
 
 async def _best_of(attempts) -> ScreenContent:
-    """Walk attempts in order, stopping at the first answer that isn't "low".
+    """Walk (label, attempt) pairs in order, stopping at the first sure answer.
 
-    Shared by the Gemini-only chain and the full cross-provider chain so the
-    two can never drift apart. Two different failures both land here and both
-    degrade rather than break: a model being out of quota (ModelUnavailable,
-    skipped) and a model being unsure (kept, but keep looking). Only a chain
-    where nothing answered at all raises.
+    Shared by the Gemini-only chain and the full cross-provider chain so the two
+    can never drift apart.
+
+    Only "high" stops the walk. "High" means the title was read off the screen
+    or the scene was unmistakable; anything less is inference, and inference is
+    exactly what a stronger model should be asked to check. This was measured:
+    across the real failing screenshots and a 12-run repeat, every wrong answer
+    that survived the anti-guessing rules was a "medium" — including "Sacred
+    Games" for Jawaani Jaaneman, which stopped the chain before it ever reached
+    GPT-4o.
+
+    Ties go to the LATER attempt. The chain is ordered fastest-first, so later
+    means stronger, and a stronger model agreeing at the same confidence is the
+    better answer to keep.
+
+    Two different failures land here and both degrade rather than break: a model
+    being out of quota (skipped, and remembered so it is not re-asked), and a
+    model being unsure (kept, but keep looking). Only a chain where nothing
+    answered at all raises.
     """
     best: Optional[ScreenContent] = None
-    for attempt in attempts:
+    for label, attempt in attempts:
+        if _on_cooldown(label):
+            continue
         try:
             result = await attempt()
         except ModelUnavailable:
+            _model_cooldown[label] = time.monotonic() + MODEL_COOLDOWN_SECONDS
             continue   # out of quota, withdrawn, or a bad key on an optional extra
-        if best is None or CONFIDENCE_RANK.get(result.confidence, 0) > \
+        if best is None or CONFIDENCE_RANK.get(result.confidence, 0) >= \
                            CONFIDENCE_RANK.get(best.confidence, 0):
             best = result
-        if CONFIDENCE_RANK.get(best.confidence, 0) > CONFIDENCE_RANK["low"]:
-            return best    # sure enough — don't spend another model on it
+        if best.confidence == "high":
+            return best    # read off the screen — nothing to gain from asking again
     if best is not None:
-        return best        # everyone was unsure; the best of them still beats nothing
+        return best        # nobody was certain; the best of them still beats nothing
     raise ProviderError("⚠️ No Clú: hit the free daily limit — try again after midnight!")
 
 
@@ -776,7 +812,7 @@ async def identify_gemini(frames: List[str],
     if not GEMINI_API_KEY:
         raise ProviderError("⚠️ No Clú: Gemini key missing — add GEMINI_API_KEY")
     parts = _gemini_parts(frames, audio)
-    return await _best_of([partial(_gemini_once, m, parts) for m in GEMINI_MODELS])
+    return await _best_of([(m, partial(_gemini_once, m, parts)) for m in GEMINI_MODELS])
 
 
 # --- Anthropic (paid) --------------------------------------------------------
@@ -892,8 +928,8 @@ async def identify_content(frames: List[str],
     attempts = []
     if GEMINI_API_KEY:
         parts = _gemini_parts(frames, audio)
-        attempts += [partial(_gemini_once, m, parts) for m in GEMINI_MODELS]
-    attempts += [partial(_openai_compatible_once, p, frames) for p in extras]
+        attempts += [(m, partial(_gemini_once, m, parts)) for m in GEMINI_MODELS]
+    attempts += [(p["label"], partial(_openai_compatible_once, p, frames)) for p in extras]
     return await _best_of(attempts)
 
 
