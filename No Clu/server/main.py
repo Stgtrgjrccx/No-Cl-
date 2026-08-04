@@ -85,10 +85,13 @@ SCAN_APP_LINK_LABEL = "📱 Open in No Clú"
 # accounts have zero free quota on the pinned gemini-2.0-flash, so "latest" is a
 # safer default). Get a key (no card) at https://aistudio.google.com/apikey
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-# Tried in order, best first. A model whose daily free quota is used up is
-# skipped rather than failing the scan, so results degrade instead of stopping.
+# Tried in order, FASTEST first — see identify_gemini for why. Measured on a
+# 1080p frame: flash-lite ~1.4s, flash ~3.5s, same answer on ordinary content.
+# Later entries are stronger, so a low-confidence answer escalates along the
+# chain; a model whose daily free quota is used up is skipped rather than
+# failing the scan, so results degrade instead of stopping.
 GEMINI_MODELS = [m.strip() for m in os.getenv(
-    "GEMINI_MODELS", "gemini-flash-latest,gemini-flash-lite-latest"
+    "GEMINI_MODELS", "gemini-flash-lite-latest,gemini-flash-latest"
 ).split(",") if m.strip()]
 # Anthropic: claude-opus-4-8 is the most accurate; claude-haiku-4-5 the fastest.
 ANTHROPIC_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
@@ -532,14 +535,38 @@ async def _gemini_once(model: str, parts: List[dict]) -> ScreenContent:
 
 async def identify_gemini(frames: List[str],
                           audio: Optional[Dict[str, str]] = None) -> ScreenContent:
+    """Identify via the model chain: fastest first, escalating only when needed.
+
+    The chain is ordered FAST-first, not best-first. Measured on a 1080p frame:
+    gemini-flash-lite answers in ~1.4s, gemini-flash in ~3.5s, and on ordinary
+    content they agree. Leading with the slow model made every single scan pay
+    for the hard ones.
+
+    The models still report their own confidence, so we don't have to guess:
+    a "low" answer is handed to the next (stronger) model in the chain, and its
+    answer wins if it is more sure. That keeps the common scan at ~1.4s while
+    the genuinely ambiguous ones still get the better model's attention.
+
+    A model whose daily free quota is gone is skipped rather than failing the
+    scan, exactly as before.
+    """
     if not GEMINI_API_KEY:
         raise ProviderError("⚠️ No Clú: Gemini key missing — add GEMINI_API_KEY")
     parts = _gemini_parts(frames, audio)
+
+    rank = {"low": 0, "medium": 1, "high": 2}
+    best: Optional[ScreenContent] = None
     for model in GEMINI_MODELS:
         try:
-            return await _gemini_once(model, parts)
+            result = await _gemini_once(model, parts)
         except ModelUnavailable:
             continue  # recoverable; a bad key or malformed request still propagates
+        if best is None or rank.get(result.confidence, 0) > rank.get(best.confidence, 0):
+            best = result
+        if rank.get(best.confidence, 0) > rank["low"]:
+            return best  # sure enough — don't pay for another model
+    if best is not None:
+        return best  # every model was unsure; the best of them still beats nothing
     raise ProviderError("⚠️ No Clú: hit the free daily limit — try again after midnight!")
 
 
@@ -589,6 +616,14 @@ async def identify_content(frames: List[str],
     raise ProviderError(f"⚠️ No Clú: unknown PROVIDER '{PROVIDER}' — use 'gemini' or 'anthropic'")
 
 
+# An IP's country does not change between scans, so the geo lookup is worth
+# remembering. This was a blocking 1.5s-timeout round trip on the front of
+# EVERY scan, usually just to rediscover the country we already default to.
+_COUNTRY_CACHE: Dict[str, str] = {}
+_COUNTRY_CACHE_MAX = 512
+_GEO_TIMEOUT = 1.0
+
+
 async def resolve_country(request: Request, country: Optional[str]) -> str:
     if country:
         c = country.strip().upper()
@@ -596,14 +631,27 @@ async def resolve_country(request: Request, country: Optional[str]) -> str:
             return c
     # When deployed on the public internet, geolocate the caller's IP.
     ip = request.client.host if request.client else ""
+    if not ip:
+        return DEFAULT_COUNTRY
+    cached = _COUNTRY_CACHE.get(ip)
+    if cached:
+        return cached
     try:
-        if ip and not ipaddress.ip_address(ip).is_private:
-            async with httpx.AsyncClient(timeout=1.5) as http:
-                r = await http.get(f"https://ipapi.co/{ip}/country/")
-                if r.status_code == 200 and len(r.text.strip()) == 2:
-                    return r.text.strip().upper()
+        if ipaddress.ip_address(ip).is_private:
+            return DEFAULT_COUNTRY
+        async with httpx.AsyncClient(timeout=_GEO_TIMEOUT) as http:
+            r = await http.get(f"https://ipapi.co/{ip}/country/")
+        if r.status_code == 200 and len(r.text.strip()) == 2:
+            resolved = r.text.strip().upper()
+            if len(_COUNTRY_CACHE) >= _COUNTRY_CACHE_MAX:
+                _COUNTRY_CACHE.clear()  # tiny cache; a full reset is fine and keeps it bounded
+            _COUNTRY_CACHE[ip] = resolved
+            return resolved
     except Exception:
         pass
+    # Remember the failure too, so a slow or blocked geo service is paid for
+    # once per address instead of on every scan from it.
+    _COUNTRY_CACHE[ip] = DEFAULT_COUNTRY
     return DEFAULT_COUNTRY
 
 
@@ -2101,7 +2149,10 @@ async def identify(request: Request, country: Optional[str] = None):
                 "summary": "🌙 No Clú's free daily limit is used up — try again after midnight!",
                 "elapsed_seconds": round(time.monotonic() - started, 2)}
 
-    resolved_country = await resolve_country(request, country)
+    # Start the geo lookup but don't wait on it: nothing before the answer needs
+    # the country, so on a cache miss its round trip hides entirely behind the
+    # AI call instead of being dead time at the front of the scan.
+    country_task = asyncio.ensure_future(resolve_country(request, country))
     try:
         media = await _read_uploaded_media(request)
         frames = _encode_frames(media["images"])
@@ -2109,11 +2160,14 @@ async def identify(request: Request, country: Optional[str] = None):
             raise ValueError("no readable frames")
         content = await identify_content(frames, media["audio"])
     except ProviderError as e:
+        country_task.cancel()
         return {"identified": False, "summary": str(e),
                 "elapsed_seconds": round(time.monotonic() - started, 2)}
     except Exception:
+        country_task.cancel()
         return {"identified": False, "summary": "🔍 Couldn't read that screen — try again.",
                 "elapsed_seconds": round(time.monotonic() - started, 2)}
+    resolved_country = await country_task
     daily_cap.record()  # only count successful recognitions against the free quota
 
     # Independent lookups, so run them together — this used to be two serial
