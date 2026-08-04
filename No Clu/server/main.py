@@ -9,13 +9,14 @@ The vision "brain" is pluggable via the PROVIDER setting in .env:
 Switching later is a one-word change plus the matching API key.
 """
 
+import asyncio
 import io
 import ipaddress
 import json
 import os
-import re
 import secrets
 import time
+import unicodedata
 from base64 import standard_b64encode
 from datetime import datetime
 from typing import Dict, List, Literal, Optional
@@ -61,6 +62,7 @@ def _set_session_cookie(request: Request, response: Response, user_id: int) -> N
 
 PROVIDER = os.getenv("PROVIDER", "gemini").lower().strip()
 TMDB_API_KEY = os.getenv("TMDB_API_KEY", "")
+TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w780"
 DEFAULT_COUNTRY = os.getenv("DEFAULT_COUNTRY", "US")
 # iCloud share link of the ready-made "No Clú" Shortcut template. Set this in the
 # host's env once the template is shared; the /shortcut page then offers one-tap
@@ -274,7 +276,23 @@ def _itunes_upsize(url: str, box: int = 1200) -> str:
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", s.lower())
+    """Fold a title down to just its comparable characters.
+
+    Keeps letters and digits from ANY script. The earlier [^a-z0-9] version
+    silently flattened every Devanagari, Japanese, Korean and Cyrillic title
+    to the empty string, so a native-script title could never match anything —
+    it only ever looked correct because the catalogs were being asked for
+    romanized titles. NFKC first so composed and decomposed forms agree.
+
+    Combining marks are kept as well as base letters: Indic vowel signs are
+    marks, not alphanumerics, so dropping them would fold "सीता" and "सिता"
+    onto one another. ASCII behaviour is unchanged — punctuation, spacing and
+    case still fall away.
+    """
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKC", s).casefold()
+        if ch.isalnum() or unicodedata.category(ch) in ("Mn", "Mc")
+    )
 
 
 def _title_qualifies(kind: str, track: str, collection: str, title: str) -> bool:
@@ -339,20 +357,101 @@ async def itunes_poster(content: ScreenContent) -> Optional[str]:
     return _itunes_upsize(candidates[0]["artworkUrl100"])
 
 
-async def fetch_poster(content: ScreenContent) -> Optional[str]:
-    """Poster art for any recognized movie/TV/anime — no account required, ever.
+def _tmdb_names(res: dict) -> List[str]:
+    """Every name TMDB holds for one result.
 
-    Uses Apple's iTunes catalog (high quality, no signup) with strict title
-    matching so we never show the wrong poster. Never raises: a poster lookup
-    failing must never break the recognition result. Returns None when there's
-    no confident match — the result card simply shows no poster.
+    Indian releases are routinely indexed under a romanized `title` AND a
+    native-script `original_title` — sometimes with the two swapped. Checking
+    only `title`, as the where-to-watch lookup originally did, is a large part
+    of why Hindi and South Indian films came back with nothing attached.
+    """
+    return [res.get("title") or "", res.get("name") or "",
+            res.get("original_title") or "", res.get("original_name") or ""]
+
+
+def _tmdb_matches(res: dict, title: str) -> bool:
+    """True when any of TMDB's names for a result is exactly the title we want.
+
+    Deliberately still an exact (normalized) comparison. Widening this to a
+    prefix or substring test would reintroduce the "Avatar" vs "Avatar: The
+    Last Airbender" mismatch — a missing poster is a shrug, a confidently
+    wrong one is a visible bug.
+    """
+    want = _norm(title)
+    return bool(want) and any(_norm(name) == want for name in _tmdb_names(res))
+
+
+async def _tmdb_find(http: httpx.AsyncClient, media: str,
+                     content: ScreenContent) -> Optional[dict]:
+    """The single TMDB entry we're confident a scan refers to, or None.
+
+    Shared by the poster and where-to-watch lookups so the two can never
+    disagree about which film they're describing.
+    """
+    params: dict = {"api_key": TMDB_API_KEY, "query": content.title}
+    year_key = "primary_release_year" if media == "movie" else "first_air_date_year"
+    if content.year:
+        params[year_key] = content.year
+
+    url = f"https://api.themoviedb.org/3/search/{media}"
+    r = await http.get(url, params=params)
+    results = r.json().get("results", [])
+    if not results and year_key in params:
+        # Retry without the year — the AI's year guess can be off by one.
+        params.pop(year_key)
+        r = await http.get(url, params=params)
+        results = r.json().get("results", [])
+
+    return next((res for res in results if _tmdb_matches(res, content.title)), None)
+
+
+async def tmdb_poster(content: ScreenContent) -> Optional[str]:
+    """Cover art from TMDB — the only source here that carries Indian cinema.
+
+    Apple's catalog has effectively no Hindi or South Indian film, so every
+    such scan showed a blank tile no matter how well it was recognized. TMDB
+    indexes them, which is the whole reason this sits alongside iTunes.
+
+    w780 rather than `original`: TMDB originals are routinely 2000x3000 and
+    several hundred KB, and the largest this is ever drawn is a phone-width
+    cover. Not worth the mobile data.
+    """
+    if not TMDB_API_KEY or content.content_type not in ("movie", "tv_show", "anime"):
+        return None
+    media = "movie" if content.content_type == "movie" else "tv"
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as http:
+            match = await _tmdb_find(http, media, content)
+    except Exception:
+        return None
+    path = (match or {}).get("poster_path")
+    return TMDB_IMAGE_BASE + path if path else None
+
+
+async def fetch_poster(content: ScreenContent) -> Optional[str]:
+    """Poster art for any recognized movie/TV/anime.
+
+    Two catalogs, strict title matching on both, so we never show the wrong
+    poster. Apple is preferred when it has the title (higher resolution, and
+    it needs no key at all); TMDB covers everything Apple doesn't, which in
+    practice means most of Indian cinema.
+
+    The two are queried CONCURRENTLY rather than one-after-the-other: the
+    fallback exists for titles Apple has never carried, and paying its latency
+    serially on every single scan would slow the common case down for nothing.
+
+    Never raises — a poster lookup failing must not break recognition. Returns
+    None when neither source is confident, and the card simply shows no poster.
     """
     if content.content_type not in ("movie", "tv_show", "anime"):
         return None
-    try:
-        return await itunes_poster(content)
-    except Exception:
-        return None
+    # return_exceptions keeps one source blowing up from taking the other down.
+    found = await asyncio.gather(itunes_poster(content), tmdb_poster(content),
+                                 return_exceptions=True)
+    for poster in found:  # gather preserves order, so Apple wins ties
+        if isinstance(poster, str) and poster:
+            return poster
+    return None
 
 
 def _loads_tolerant(text: str) -> dict:
@@ -514,32 +613,12 @@ async def tmdb_where_to_watch(content: ScreenContent, country: str) -> Optional[
         return None
 
     media = "movie" if content.content_type == "movie" else "tv"
-    params: dict = {"api_key": TMDB_API_KEY, "query": content.title}
-    if content.year:
-        params["primary_release_year" if media == "movie" else "first_air_date_year"] = content.year
 
     try:
         async with httpx.AsyncClient(timeout=4.0) as http:
-            r = await http.get(f"https://api.themoviedb.org/3/search/{media}", params=params)
-            results = r.json().get("results", [])
-            if not results and ("primary_release_year" in params or "first_air_date_year" in params):
-                # Retry without the year — the AI's year guess can be off by one.
-                params.pop("primary_release_year", None)
-                params.pop("first_air_date_year", None)
-                r = await http.get(f"https://api.themoviedb.org/3/search/{media}", params=params)
-                results = r.json().get("results", [])
-            if not results:
-                return None
-
-            # Prefer a result whose title actually matches (TMDB relevance can
-            # rank a same-keyword title first, e.g. "Avatar" vs "Avatar: TLA").
-            # Better to show nothing than the wrong title's streaming info.
-            want = _norm(content.title)
-            match = next(
-                (res for res in results
-                 if _norm(res.get("title") or res.get("name") or "") == want),
-                results[0] if _norm(results[0].get("title") or results[0].get("name") or "") == want else None,
-            )
+            # Same confident-match search the poster uses, so the streaming
+            # info and the cover art can never describe different films.
+            match = await _tmdb_find(http, media, content)
             if match is None:
                 return None
 
@@ -1874,6 +1953,12 @@ def _group_watch(watch: Optional[dict], title: str, country: str) -> dict:
     return {"providers": providers, "watch": buckets, "primary": primary}
 
 
+async def _none():
+    """An awaitable that resolves to None — lets gather() keep a fixed shape
+    when one of its branches is skipped."""
+    return None
+
+
 async def watch_options(content: ScreenContent, country: str) -> dict:
     """Where to watch, as tappable chips plus a JustWatch catch-all.
 
@@ -1930,7 +2015,28 @@ async def api_title(request: Request, scan_id: int):
         confidence="high", detail=data["detail"] or "",
     )
     data["country"] = country
-    data.update(await watch_options(content, country))
+
+    # Scans stored before a catalog could find them kept a NULL poster, and
+    # nothing would ever have filled it in. Opening one is the natural moment
+    # to try again, so old Indian titles pick up art instead of staying blank
+    # forever. Runs alongside the watch lookup, not before it.
+    need_poster = not data.get("poster")
+    watch, late_poster = await asyncio.gather(
+        watch_options(content, country),
+        fetch_poster(content) if need_poster else _none(),
+    )
+    data.update(watch)
+    if late_poster:
+        data["poster"] = late_poster
+        # Best-effort: a failed backfill must never cost the user the page.
+        try:
+            session = db.SessionLocal()
+            try:
+                db.set_scan_poster(session, scan_id, uid, late_poster)
+            finally:
+                session.close()
+        except Exception:
+            pass
     return data
 
 
@@ -1960,15 +2066,21 @@ async def title_page(scan_id: int):
 
 @app.get("/app-icon.png")
 async def app_icon():
-    """Amber-diamond home-screen icon, generated once so no asset file is needed."""
+    """Neon prism home-screen icon, generated so no asset file is needed.
+
+    Matches the Neon night palette the rest of the app moved to: a hot-pink
+    diamond on the same deep violet ground, so the icon on the home screen
+    and the first screen it opens are the same object.
+    """
     size = 180
-    icon = Image.new("RGB", (size, size), (0, 0, 0))
+    ground, neon = (10, 6, 20), (255, 45, 149)
+    icon = Image.new("RGB", (size, size), ground)
     d = ImageDraw.Draw(icon)
     cx = cy = size // 2
     d.polygon([(cx, 34), (size - 34, cy), (cx, size - 34), (34, cy)],
-              outline=(224, 165, 90), width=4)
+              outline=neon, width=4)
     d.polygon([(cx, 74), (size - 74, cy), (cx, size - 74), (74, cy)],
-              fill=(224, 165, 90))
+              fill=neon)
     buf = io.BytesIO()
     icon.save(buf, format="PNG")
     return Response(content=buf.getvalue(), media_type="image/png")
@@ -2004,8 +2116,13 @@ async def identify(request: Request, country: Optional[str] = None):
                 "elapsed_seconds": round(time.monotonic() - started, 2)}
     daily_cap.record()  # only count successful recognitions against the free quota
 
-    watch = await tmdb_where_to_watch(content, resolved_country)
-    poster = await fetch_poster(content)
+    # Independent lookups, so run them together — this used to be two serial
+    # round trips on the critical path of every scan. Both swallow their own
+    # errors and return None, so neither can break the result.
+    watch, poster = await asyncio.gather(
+        tmdb_where_to_watch(content, resolved_country),
+        fetch_poster(content),
+    )
 
     # "Where to watch in <country>" — build tappable per-platform links.
     # Same helper the detail page uses, so both surfaces agree. `justwatch`
