@@ -212,6 +212,22 @@ def get_scan_for_user(db, scan_id: int, user_id: int) -> Optional[Scan]:
     )
 
 
+def set_scan_poster(db, scan_id: int, user_id: int, poster: str) -> bool:
+    """Attach cover art to a scan that was stored without any. Returns True if saved.
+
+    Scans saved before a poster source could find them keep a NULL poster
+    forever, so opening one is the natural moment to fill it in. Scoped by
+    user_id for the same reason get_scan_for_user is: the query itself, not a
+    caller's memory, is what stops one account writing to another's row.
+    """
+    scan = get_scan_for_user(db, scan_id, user_id)
+    if scan is None or scan.poster:
+        return False
+    scan.poster = poster
+    db.commit()
+    return True
+
+
 def recent_scans(db, user_id: int, limit: int = 30) -> List[Scan]:
     return list(db.scalars(
         select(Scan).where(Scan.user_id == user_id)
