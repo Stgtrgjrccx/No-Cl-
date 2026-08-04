@@ -19,6 +19,7 @@ import time
 import unicodedata
 from base64 import standard_b64encode
 from datetime import datetime
+from functools import partial
 from typing import Dict, List, Literal, Optional, Tuple
 from urllib.parse import quote_plus, urlencode
 
@@ -95,6 +96,61 @@ GEMINI_MODELS = [m.strip() for m in os.getenv(
 ).split(",") if m.strip()]
 # Anthropic: claude-opus-4-8 is the most accurate; claude-haiku-4-5 the fastest.
 ANTHROPIC_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
+
+# --- Free vision providers beyond Gemini -------------------------------------
+# All three speak the OpenAI chat-completions shape, so one adapter serves them
+# all. Every one is optional: leave a key unset and that provider is simply
+# skipped. They exist for two jobs Gemini alone does badly:
+#
+#   ESCALATE  — a frontier model for scans the fast model is unsure about.
+#               "Which Saif Ali Khan film is this?" is world knowledge, which is
+#               exactly where a bigger model beats a faster one. GitHub Models
+#               gives GPT-4o vision at ~50 requests/day free, and escalation
+#               only fires on uncertain scans, so that budget is ample.
+#   BACKSTOP  — somewhere to go when Gemini's daily quota is gone, so scans
+#               degrade instead of failing.
+#
+# Deliberately NOT solved by minting extra Gemini keys: keys inside one Google
+# project share a single quota pool, so it would not work, and creating extra
+# projects to dodge the limit breaks Google's terms — risking the account the
+# whole app depends on.
+GITHUB_MODELS_TOKEN = os.getenv("GITHUB_MODELS_TOKEN", "").strip()
+GITHUB_MODELS_MODEL = os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-maverick-17b-128e-instruct")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
+MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "pixtral-12b-2409")
+
+
+def _extra_providers() -> List[Dict[str, str]]:
+    """Configured OpenAI-compatible vision providers, best-answer first.
+
+    Order is by expected accuracy, not speed — these only run when Gemini was
+    unsure or unavailable, so being slower than Gemini is the accepted cost.
+    """
+    configured = []
+    if GITHUB_MODELS_TOKEN:
+        configured.append({
+            "label": "github-models",
+            "base": "https://models.inference.ai.azure.com",
+            "key": GITHUB_MODELS_TOKEN,
+            "model": GITHUB_MODELS_MODEL,
+        })
+    if GROQ_API_KEY:
+        configured.append({
+            "label": "groq",
+            "base": "https://api.groq.com/openai/v1",
+            "key": GROQ_API_KEY,
+            "model": GROQ_MODEL,
+        })
+    if MISTRAL_API_KEY:
+        configured.append({
+            "label": "mistral",
+            "base": "https://api.mistral.ai/v1",
+            "key": MISTRAL_API_KEY,
+            "model": MISTRAL_MODEL,
+        })
+    return configured
 
 # Vision models read a ~1.15MP image at full fidelity; anything bigger just adds
 # upload + processing latency, so downscale before sending.
@@ -672,9 +728,37 @@ async def _gemini_once(model: str, parts: List[dict]) -> ScreenContent:
     return _parse_json_blob(text)
 
 
+CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+async def _best_of(attempts) -> ScreenContent:
+    """Walk attempts in order, stopping at the first answer that isn't "low".
+
+    Shared by the Gemini-only chain and the full cross-provider chain so the
+    two can never drift apart. Two different failures both land here and both
+    degrade rather than break: a model being out of quota (ModelUnavailable,
+    skipped) and a model being unsure (kept, but keep looking). Only a chain
+    where nothing answered at all raises.
+    """
+    best: Optional[ScreenContent] = None
+    for attempt in attempts:
+        try:
+            result = await attempt()
+        except ModelUnavailable:
+            continue   # out of quota, withdrawn, or a bad key on an optional extra
+        if best is None or CONFIDENCE_RANK.get(result.confidence, 0) > \
+                           CONFIDENCE_RANK.get(best.confidence, 0):
+            best = result
+        if CONFIDENCE_RANK.get(best.confidence, 0) > CONFIDENCE_RANK["low"]:
+            return best    # sure enough — don't spend another model on it
+    if best is not None:
+        return best        # everyone was unsure; the best of them still beats nothing
+    raise ProviderError("⚠️ No Clú: hit the free daily limit — try again after midnight!")
+
+
 async def identify_gemini(frames: List[str],
                           audio: Optional[Dict[str, str]] = None) -> ScreenContent:
-    """Identify via the model chain: fastest first, escalating only when needed.
+    """Identify via the Gemini model chain: fastest first, escalating when needed.
 
     The chain is ordered FAST-first, not best-first. Measured on a 1080p frame:
     gemini-flash-lite answers in ~1.4s, gemini-flash in ~3.5s, and on ordinary
@@ -692,24 +776,59 @@ async def identify_gemini(frames: List[str],
     if not GEMINI_API_KEY:
         raise ProviderError("⚠️ No Clú: Gemini key missing — add GEMINI_API_KEY")
     parts = _gemini_parts(frames, audio)
-
-    rank = {"low": 0, "medium": 1, "high": 2}
-    best: Optional[ScreenContent] = None
-    for model in GEMINI_MODELS:
-        try:
-            result = await _gemini_once(model, parts)
-        except ModelUnavailable:
-            continue  # recoverable; a bad key or malformed request still propagates
-        if best is None or rank.get(result.confidence, 0) > rank.get(best.confidence, 0):
-            best = result
-        if rank.get(best.confidence, 0) > rank["low"]:
-            return best  # sure enough — don't pay for another model
-    if best is not None:
-        return best  # every model was unsure; the best of them still beats nothing
-    raise ProviderError("⚠️ No Clú: hit the free daily limit — try again after midnight!")
+    return await _best_of([partial(_gemini_once, m, parts) for m in GEMINI_MODELS])
 
 
 # --- Anthropic (paid) --------------------------------------------------------
+async def _openai_compatible_once(provider: Dict[str, str],
+                                  frames: List[str]) -> ScreenContent:
+    """One attempt against any OpenAI-compatible vision endpoint.
+
+    Images only — none of these free tiers accept the audio clip Gemini can
+    take, so a scan that reaches here is judged on the picture alone. Frames are
+    capped at two: GitHub Models allows just 8K input tokens and images are
+    expensive, so sending five would fail the request outright.
+
+    Raises ModelUnavailable on 429/404/5xx so the caller falls through, matching
+    _gemini_once. Auth failures also fall through rather than killing the scan —
+    a misconfigured backstop must never take down a working primary.
+    """
+    body = {
+        "model": provider["model"],
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [{
+            "role": "user",
+            "content": (
+                [{"type": "text", "text": IDENTIFY_PROMPT}] +
+                [{"type": "image_url",
+                  "image_url": {"url": f"data:image/jpeg;base64,{f}"}}
+                 for f in frames[:2]]
+            ),
+        }],
+    }
+    url = provider["base"].rstrip("/") + "/chat/completions"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.post(url, json=body, headers={
+                "Authorization": f"Bearer {provider['key']}",
+                "Content-Type": "application/json",
+            })
+    except httpx.HTTPError:
+        raise ModelUnavailable(f"{provider['label']} unreachable")
+
+    if r.status_code != 200:
+        # Everything is recoverable here, including 401/403: these providers are
+        # optional extras, so a bad key must degrade to the next one silently
+        # rather than surface as a failed scan.
+        raise ModelUnavailable(f"{provider['label']} unavailable (HTTP {r.status_code})")
+    try:
+        text = r.json()["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, ValueError):
+        raise ModelUnavailable(f"{provider['label']} returned no usable content")
+    return _parse_json_blob(text)
+
+
 async def identify_anthropic(frames: List[str],
                              audio: Optional[Dict[str, str]] = None) -> ScreenContent:
     import anthropic  # imported lazily so Gemini-only users needn't configure it
@@ -748,11 +867,34 @@ async def identify_anthropic(frames: List[str],
 
 async def identify_content(frames: List[str],
                            audio: Optional[Dict[str, str]] = None) -> ScreenContent:
+    """Identify the screen, escalating across models and then across providers.
+
+    One chain, walked fastest-first: the Gemini models, then any extra free
+    provider that is configured. A confident answer stops the walk immediately,
+    so the ordinary scan still costs exactly one fast call. Only an unsure
+    answer keeps going, and only an unsure answer ever reaches a paid-quality
+    model like GPT-4o — which is what keeps a ~50/day free budget sufficient.
+
+    Two distinct failures both land here and both degrade rather than break:
+    a model being out of quota, and a model being unsure. In either case the
+    best answer seen so far is returned; only a chain where nothing answered at
+    all raises.
+    """
     if PROVIDER == "anthropic":
         return await identify_anthropic(frames, audio)
-    if PROVIDER == "gemini":
-        return await identify_gemini(frames, audio)
-    raise ProviderError(f"⚠️ No Clú: unknown PROVIDER '{PROVIDER}' — use 'gemini' or 'anthropic'")
+    if PROVIDER != "gemini":
+        raise ProviderError(f"⚠️ No Clú: unknown PROVIDER '{PROVIDER}' — use 'gemini' or 'anthropic'")
+
+    extras = _extra_providers()
+    if not GEMINI_API_KEY and not extras:
+        raise ProviderError("⚠️ No Clú: Gemini key missing — add GEMINI_API_KEY")
+
+    attempts = []
+    if GEMINI_API_KEY:
+        parts = _gemini_parts(frames, audio)
+        attempts += [partial(_gemini_once, m, parts) for m in GEMINI_MODELS]
+    attempts += [partial(_openai_compatible_once, p, frames) for p in extras]
+    return await _best_of(attempts)
 
 
 # An IP's country does not change between scans, so the geo lookup is worth
@@ -2299,8 +2441,11 @@ async def app_icon():
 @app.get("/")
 async def health():
     key_present = bool(GEMINI_API_KEY) if PROVIDER == "gemini" else bool(os.getenv("ANTHROPIC_API_KEY"))
+    # Names only, never values: this is how a key can be confirmed as installed
+    # without the key itself ever leaving the dashboard it was pasted into.
     return {"app": "No Clú", "provider": PROVIDER, "key_configured": key_present,
-            "tmdb": bool(TMDB_API_KEY), "default_country": DEFAULT_COUNTRY}
+            "tmdb": bool(TMDB_API_KEY), "default_country": DEFAULT_COUNTRY,
+            "extra_providers": [p["label"] for p in _extra_providers()]}
 
 
 @app.post("/identify")
