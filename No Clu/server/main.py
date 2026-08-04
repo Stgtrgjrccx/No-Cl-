@@ -840,9 +840,6 @@ APP_HTML = """<!doctype html>
   .who .out{font-family:var(--mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--amber);
             border:1px solid rgba(224,165,90,.3);border-radius:20px;padding:6px 10px;background:none;cursor:pointer}
   main{flex:1;display:flex;flex-direction:column;align-items:center;padding:10px 22px 30px;overflow-y:auto}
-  .status{font-family:var(--mono);font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--muted);
-          margin:14px 0 26px;transition:color .3s;min-height:14px}
-  .status.on{color:var(--amber-bright)}
   /* ---- the prism lens: a 5.4s prism-led sequence -----------------------
      Fold edge-on, wind down, collapse to a white point, then refract out as a
      spectrum. `.on` is set on .stage (an ANCESTOR of .pi), so every state rule
@@ -1021,7 +1018,6 @@ APP_HTML = """<!doctype html>
       <div class="who"><span class="name" id="whoName"></span><button class="out" onclick="askLogout()">Sign out</button></div>
     </div>
     <main>
-      <div class="status" id="status">Tap the lens</div>
       <div class="stage" id="stage">
         <div class="pi" id="lens">
           <div class="halo"></div><div class="prog"></div><div class="prism-rim"></div>
@@ -1145,28 +1141,24 @@ APP_HTML = """<!doctype html>
   // scanning happens from the Shortcut (Siri or Back Tap). Tapping toggles the
   // lens between idle and active and plays the pulse — it makes no claim to be
   // scanning, so it can't mislead.
-  var lens=document.getElementById('lens'), stage=document.getElementById('stage'),
-      statusEl=document.getElementById('status');
+  var lens=document.getElementById('lens'), stage=document.getElementById('stage');
   var lensBusy=false;
-  function toggleLens(){
-    // Locked while closing so a second tap can't strand it half-open.
+  // Fire-and-reset: one tap plays the full 5.4s sequence, then it closes itself
+  // and returns to rest. Locked throughout so a second tap can't strand it.
+  var LENS_OPEN_MS=5400, LENS_CLOSE_MS=820;
+  function playLens(){
     if(lensBusy) return;
-    if(stage.classList.contains('on')){
-      lensBusy=true;
+    lensBusy=true;
+    stage.classList.add('on');
+    setTimeout(function(){
       stage.classList.add('closing');
-      statusEl.classList.remove('on');
-      statusEl.textContent='Tap the lens';
       setTimeout(function(){
         stage.classList.remove('on','closing');
         lensBusy=false;
-      }, 820);
-    } else {
-      stage.classList.add('on');
-      statusEl.classList.add('on');
-      statusEl.textContent='Tap again to close';
-    }
+      }, LENS_CLOSE_MS);
+    }, LENS_OPEN_MS);
   }
-  lens.addEventListener('click', toggleLens);
+  lens.addEventListener('click', playLens);
 
   // Show a social button only if its credentials exist server-side.
   (function(){
