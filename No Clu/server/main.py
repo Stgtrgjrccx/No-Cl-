@@ -945,12 +945,20 @@ async def _openai_compatible_once(provider: Dict[str, str],
         }],
     }
     url = provider["base"].rstrip("/") + "/chat/completions"
+    headers = {"Authorization": f"Bearer {provider['key']}",
+               "Content-Type": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            r = await http.post(url, json=body, headers={
-                "Authorization": f"Bearer {provider['key']}",
-                "Content-Type": "application/json",
-            })
+            r = await http.post(url, json=body, headers=headers)
+            # Groq's qwen3.6-27b rejects our request with "Failed to validate
+            # JSON. Please adjust your prompt." — its JSON mode refusing its own
+            # output. Asking for JSON mode is an optimisation, not a
+            # requirement: the prompt already demands a bare JSON object and
+            # _parse_json_blob copes with fences, prose and truncation. So drop
+            # the constraint and ask once more rather than lose the provider.
+            if r.status_code == 400 and "json" in _why(r).lower():
+                body.pop("response_format", None)
+                r = await http.post(url, json=body, headers=headers)
     except httpx.HTTPError:
         raise ModelUnavailable(f"{provider['label']} unreachable")
 
