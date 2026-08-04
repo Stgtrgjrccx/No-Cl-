@@ -114,12 +114,23 @@ ANTHROPIC_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
 # project share a single quota pool, so it would not work, and creating extra
 # projects to dodge the limit breaks Google's terms — risking the account the
 # whole app depends on.
+# Each takes a COMMA-SEPARATED list, tried in order. Model ids on these
+# services churn constantly — the first Groq id here was a guess that returned
+# 404 and silently disabled the whole provider for hours. A list means a
+# renamed or retired model costs one wasted call, not a dead fallback.
 GITHUB_MODELS_TOKEN = os.getenv("GITHUB_MODELS_TOKEN", "").strip()
-GITHUB_MODELS_MODEL = os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
+GITHUB_MODELS_MODEL = os.getenv("GITHUB_MODELS_MODEL", "gpt-4o,gpt-4o-mini")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-maverick-17b-128e-instruct")
+GROQ_MODEL = os.getenv(
+    "GROQ_MODEL",
+    "meta-llama/llama-4-scout-17b-16e-instruct,"
+    "meta-llama/llama-4-maverick-17b-128e-instruct")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
-MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "pixtral-12b-2409")
+MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "pixtral-12b-2409,pixtral-large-latest")
+
+
+def _models(spec: str) -> List[str]:
+    return [m.strip() for m in spec.split(",") if m.strip()]
 
 
 def _extra_providers() -> List[Dict[str, str]]:
@@ -128,35 +139,29 @@ def _extra_providers() -> List[Dict[str, str]]:
     Order is by expected accuracy, not speed — these only run when Gemini was
     unsure or unavailable, so being slower than Gemini is the accepted cost.
     """
+    # One entry per (service, model): a 404 on a renamed model then falls
+    # through to the next id instead of disabling the service.
+    services = [
+        # A frontier model: the escalation target, and the only extra trusted
+        # to overrule Gemini when both are equally sure.
+        (GITHUB_MODELS_TOKEN, "github-models", "https://models.inference.ai.azure.com",
+         GITHUB_MODELS_MODEL, STRENGTH_FRONTIER),
+        # Backstops, not authorities. Large free quotas, weaker judgement —
+        # they answer when nothing better could, and never win a tie.
+        (GROQ_API_KEY, "groq", "https://api.groq.com/openai/v1",
+         GROQ_MODEL, STRENGTH_BACKSTOP),
+        (MISTRAL_API_KEY, "mistral", "https://api.mistral.ai/v1",
+         MISTRAL_MODEL, STRENGTH_BACKSTOP),
+    ]
     configured = []
-    if GITHUB_MODELS_TOKEN:
-        configured.append({
-            "label": "github-models",
-            "base": "https://models.inference.ai.azure.com",
-            "key": GITHUB_MODELS_TOKEN,
-            "model": GITHUB_MODELS_MODEL,
-            # A frontier model: the escalation target, and the only extra
-            # trusted to overrule Gemini when both are equally sure.
-            "strength": STRENGTH_FRONTIER,
-        })
-    if GROQ_API_KEY:
-        configured.append({
-            "label": "groq",
-            "base": "https://api.groq.com/openai/v1",
-            "key": GROQ_API_KEY,
-            "model": GROQ_MODEL,
-            # Backstop, not an authority. Large free quota, weaker judgement —
-            # it answers when nothing better could, and never wins a tie.
-            "strength": STRENGTH_BACKSTOP,
-        })
-    if MISTRAL_API_KEY:
-        configured.append({
-            "label": "mistral",
-            "base": "https://api.mistral.ai/v1",
-            "key": MISTRAL_API_KEY,
-            "model": MISTRAL_MODEL,
-            "strength": STRENGTH_BACKSTOP,
-        })
+    for key, name, base, spec, strength in services:
+        if not key:
+            continue
+        for model in _models(spec):
+            configured.append({
+                "label": f"{name}/{model}", "service": name, "base": base,
+                "key": key, "model": model, "strength": strength,
+            })
     return configured
 
 # Vision models read a ~1.15MP image at full fidelity; anything bigger just adds
@@ -2559,7 +2564,7 @@ async def health():
     # without the key itself ever leaving the dashboard it was pasted into.
     return {"app": "No Clú", "provider": PROVIDER, "key_configured": key_present,
             "tmdb": bool(TMDB_API_KEY), "default_country": DEFAULT_COUNTRY,
-            "extra_providers": [p["label"] for p in _extra_providers()],
+            "extra_providers": sorted({p["service"] for p in _extra_providers()}),
             "provider_errors": dict(_provider_last_error)}
 
 
