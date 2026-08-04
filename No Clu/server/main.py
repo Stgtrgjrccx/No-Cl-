@@ -259,6 +259,11 @@ class ScreenContent(BaseModel):
     evidence: str = ""
     evidence_type: Literal[
         "title_text", "player_ui", "scene", "person_only", "none"] = "none"
+    # Which model actually produced this. Filled in by _best_of, never by the
+    # model itself — without it there is no way to tell from the outside
+    # whether escalation reached the frontier provider or quietly fell through
+    # to the backstop, which is exactly the confusion that cost hours here.
+    source: str = ""
 
 
 # Strict shape Gemini must return — prevents malformed/truncated JSON.
@@ -842,6 +847,7 @@ async def _best_of(attempts) -> ScreenContent:
             continue   # out of quota, withdrawn, or a bad key on an optional extra
         # Confidence first, model strength only as the tie-break: a weaker model
         # being surer of itself does not make it right.
+        result = result.model_copy(update={"source": label})
         score = (CONFIDENCE_RANK.get(result.confidence, 0), strength)
         if best_score is None or score > best_score:
             best, best_score = result, score
@@ -2620,6 +2626,7 @@ async def identify(request: Request, country: Optional[str] = None):
         "detail": content.detail,
         "evidence": content.evidence,
         "evidence_type": content.evidence_type,
+        "source": content.source,
         "country": resolved_country,
         # NOTE: `watch` here is TMDB's RAW dict (plain provider-name strings),
         # which /demo renders. /api/title's `watch` is the grouped, linked shape
