@@ -792,43 +792,68 @@ APP_HTML = """<!doctype html>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="No Clu">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#0A0614">
 <link rel="apple-touch-icon" href="/app-icon.png">
 <link rel="icon" href="/app-icon.png">
 <title>No Clú</title>
 <style>
+  /* ==== NEON NIGHT ====================================================
+     A single committed visual world: signage after dark. Deep violet
+     ground, an ambient wash of pink/cyan/violet behind everything, and
+     controls drawn as lit glass tubes rather than filled slabs. It does
+     not follow the viewer's light/dark preference on purpose — a neon
+     sign has one state, and inverting it would destroy the idea. */
   :root{
-    --bg:#000; --card:#0D0B08; --ink:#F4F1EA; --muted:#9a8f7d; --faint:#6a6152;
-    --amber:#E0A55A; --amber-bright:#F2C784; --err:#e77;
+    --bg:#0A0614; --ink:#F6E9FF; --muted:#B79DD0; --faint:#7B6B94;
+    --card:rgba(28,13,50,.62); --err:#FF6E8A;
+    --pink:#FF2D95; --pink-soft:#FF9AC9; --cyan:#00E5FF; --cyan-soft:#9BE7FF; --violet:#7B2DFF;
+    --edge:rgba(255,45,149,.30); --edge-cyan:rgba(0,229,255,.26);
     --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
     --sans: -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
   html,body{height:100%}
   body{background:var(--bg);color:var(--ink);font-family:var(--sans);
-       min-height:100dvh;display:flex;flex-direction:column;
+       min-height:100dvh;display:flex;flex-direction:column;position:relative;
        padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);-webkit-font-smoothing:antialiased}
+  /* the sign glow — fixed so it never scrolls away, behind all content */
+  body:before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(46% 26% at 16% 8%, rgba(255,45,149,.55), transparent 66%),
+      radial-gradient(42% 24% at 88% 34%, rgba(0,229,255,.34), transparent 64%),
+      radial-gradient(60% 32% at 44% 102%, rgba(123,45,255,.46), transparent 66%)}
+  body>*{position:relative;z-index:1}
   @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
-  .brand{font-family:var(--mono);font-weight:700;letter-spacing:3px;color:var(--amber);text-shadow:0 0 14px rgba(224,165,90,.55)}
+  /* the brand is the sign itself: a white-hot core inside a pink bloom */
+  .brand{font-family:var(--mono);font-weight:700;letter-spacing:3px;color:#FFF;
+         text-shadow:0 0 1px #fff,0 0 8px var(--pink),0 0 22px var(--pink),0 0 46px rgba(255,45,149,.6)}
 
   /* ---- sign-in gate ---- */
   #gate{flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;padding:30px 24px}
   #gate.show{display:flex}
-  #gate .brand{font-size:34px;margin-bottom:6px}
-  .authcard{width:100%;max-width:360px;background:var(--card);border:1px solid rgba(224,165,90,.2);border-radius:18px;padding:22px}
-  .seg{display:flex;background:rgba(255,255,255,.04);border-radius:12px;padding:4px;margin-bottom:18px}
+  #gate .brand{font-size:34px;margin-bottom:22px}
+  .authcard{width:100%;max-width:360px;background:var(--card);border:1px solid var(--edge);border-radius:20px;padding:22px;
+            backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
+            box-shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 18px 60px rgba(0,0,0,.55),0 0 40px rgba(255,45,149,.14)}
+  .seg{display:flex;background:rgba(255,255,255,.05);border-radius:13px;padding:4px;margin-bottom:18px}
   .seg button{flex:1;font-family:var(--mono);font-size:12px;letter-spacing:1px;text-transform:uppercase;
-              padding:9px;border:none;border-radius:9px;background:transparent;color:var(--muted);cursor:pointer}
-  .seg button.on{background:var(--amber);color:#1a0f00;font-weight:700}
+              padding:9px;border:none;border-radius:10px;background:transparent;color:var(--muted);cursor:pointer}
+  .seg button.on{background:linear-gradient(135deg,var(--pink),var(--violet));color:#fff;font-weight:700;
+                 box-shadow:0 0 18px rgba(255,45,149,.55)}
   .field{margin-bottom:12px}
-  .field input{width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(224,165,90,.2);border-radius:11px;
+  .field input{width:100%;background:rgba(10,6,20,.55);border:1px solid var(--edge-cyan);border-radius:12px;
                padding:14px;color:var(--ink);font-size:16px}
-  .field input:focus{outline:none;border-color:var(--amber)}
+  .field input::placeholder{color:#9A88B6}
+  .field input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.16),0 0 18px rgba(0,229,255,.3)}
   .err{color:var(--err);font-size:13px;min-height:16px;margin:2px 0 10px}
-  .primary{width:100%;height:50px;border:none;border-radius:12px;background:var(--amber);color:#1a0f00;
-           font-family:var(--mono);font-weight:700;font-size:14px;letter-spacing:1px;text-transform:uppercase;cursor:pointer}
-  .primary:disabled{opacity:.6}
-  .soon{margin-top:16px;text-align:center;font-size:12px;color:var(--faint)}
+  /* neon tube: lit outline, not a painted slab */
+  .primary{width:100%;height:50px;border:1.5px solid var(--pink);border-radius:13px;
+           background:rgba(255,45,149,.12);color:#FFE9F5;
+           font-family:var(--mono);font-weight:700;font-size:14px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;
+           text-shadow:0 0 10px rgba(255,45,149,.9);
+           box-shadow:0 0 20px rgba(255,45,149,.45),inset 0 0 20px rgba(255,45,149,.18)}
+  .primary:active{transform:scale(.985)}
+  .primary:disabled{opacity:.55;box-shadow:none}
 
   /* ---- main app ---- */
   #app{flex:1;display:none;flex-direction:column}
@@ -837,8 +862,8 @@ APP_HTML = """<!doctype html>
   .top .brand{font-size:24px}
   .who{display:flex;align-items:center;gap:10px}
   .who .name{font-family:var(--mono);font-size:11px;color:var(--muted);max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .who .out{font-family:var(--mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--amber);
-            border:1px solid rgba(224,165,90,.3);border-radius:20px;padding:6px 10px;background:none;cursor:pointer}
+  .who .out{font-family:var(--mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--cyan-soft);
+            border:1px solid var(--edge-cyan);border-radius:20px;padding:6px 10px;background:rgba(0,229,255,.06);cursor:pointer}
   main{flex:1;display:flex;flex-direction:column;align-items:center;padding:10px 22px 30px;overflow-y:auto}
   /* ---- the prism lens: a 5.4s prism-led sequence -----------------------
      Fold edge-on, wind down, collapse to a white point, then refract out as a
@@ -856,20 +881,24 @@ APP_HTML = """<!doctype html>
       opacity:1;transition:opacity .3s ease}
   .pi>*{position:absolute;pointer-events:none}
   .halo{inset:-26%;border-radius:50%;opacity:.5;
-        background:radial-gradient(circle,rgba(224,165,90,.2),transparent 62%)}
+        background:radial-gradient(circle,rgba(255,45,149,.26),rgba(123,45,255,.14) 40%,transparent 64%)}
   .prism-rim{inset:0;border-radius:26%;opacity:.28;transform:rotate(45deg);
-    background:conic-gradient(from 210deg,rgba(155,107,255,.6),rgba(224,165,90,.5),
-      rgba(123,227,192,.6),rgba(143,212,255,.5),rgba(155,107,255,.6));
+    background:conic-gradient(from 210deg,rgba(155,107,255,.6),rgba(255,45,149,.55),
+      rgba(123,227,192,.6),rgba(0,229,255,.55),rgba(155,107,255,.6));
     -webkit-mask:radial-gradient(circle,transparent 62%,#000 64%);
             mask:radial-gradient(circle,transparent 62%,#000 64%)}
   .prog{inset:-15%;border-radius:50%;opacity:0;
-        background:conic-gradient(rgba(143,212,255,.5) 0deg,transparent 0deg)}
+        background:conic-gradient(rgba(0,229,255,.6) 0deg,transparent 0deg)}
   .shards{inset:0;transform:rotate(45deg);transform-style:preserve-3d}
+  /* Over the neon wash, a 210% saturate boost turned the whole prism into one
+     flat magenta slab and killed the facets. Held near 120% it reads as glass
+     picking up the sign light, which is the point. */
   .sh{position:absolute;left:50%;top:50%;width:52%;height:52%;transform-origin:0 0;overflow:hidden;
-    background:linear-gradient(140deg,rgba(255,255,255,.46),rgba(255,255,255,.10) 46%,rgba(255,255,255,.28));
-    backdrop-filter:blur(13px) saturate(210%);-webkit-backdrop-filter:blur(13px) saturate(210%);
-    border:.5px solid rgba(255,255,255,.46);border-radius:3px 22% 3px 3px;
-    box-shadow:inset 0 1.5px 0 rgba(255,255,255,.72),0 8px 20px rgba(0,0,0,.42)}
+    background:linear-gradient(140deg,rgba(255,255,255,.58),rgba(255,255,255,.14) 46%,rgba(255,255,255,.36));
+    backdrop-filter:blur(13px) saturate(155%);
+    -webkit-backdrop-filter:blur(13px) saturate(155%);
+    border:.5px solid rgba(255,255,255,.55);border-radius:3px 22% 3px 3px;
+    box-shadow:inset 0 1.5px 0 rgba(255,255,255,.8),0 8px 20px rgba(0,0,0,.5)}
   .sh:before{content:"";position:absolute;inset:0;background:var(--c,#fff);opacity:0;mix-blend-mode:screen}
   .sh:after{content:"";position:absolute;inset:0;opacity:.6;
     box-shadow:inset 1.5px 0 0 rgba(155,107,255,.6),inset -1.5px 0 0 rgba(123,227,192,.6)}
@@ -878,8 +907,8 @@ APP_HTML = """<!doctype html>
   .sh:nth-child(3){transform:translate(0,0) rotate(180deg)}
   .sh:nth-child(4){transform:translate(-100%,0) rotate(270deg)}
   .core{width:26%;height:26%;border-radius:50%;transform:scale(.6);
-    background:radial-gradient(circle at 36% 30%,#FFF6E4,var(--amber) 66%);
-    box-shadow:0 0 22px 4px rgba(224,165,90,.5)}
+    background:radial-gradient(circle at 36% 30%,#FFF0FA,var(--pink) 66%);
+    box-shadow:0 0 24px 5px rgba(255,45,149,.6)}
   .beam{left:50%;top:50%;width:3px;height:52%;transform-origin:50% 0;opacity:0;border-radius:2px;
         transform:rotate(var(--a)) scaleY(.1)}
   .flash{inset:-8%;border-radius:50%;opacity:0;background:radial-gradient(circle,#fff,transparent 58%)}
@@ -910,8 +939,8 @@ APP_HTML = """<!doctype html>
     34%{transform:scale(.1);background:radial-gradient(circle,#fff,#fff)}
     42%{transform:scale(1.9);box-shadow:0 0 80px 26px rgba(255,255,255,.9)}
     56%{transform:scale(.85);background:radial-gradient(circle at 36% 30%,#fff,#FF7A8A 60%)}
-    100%{transform:scale(1.1);background:radial-gradient(circle at 36% 30%,#fff,var(--amber) 62%);
-      box-shadow:0 0 52px 13px rgba(224,165,90,.55)}}
+    100%{transform:scale(1.1);background:radial-gradient(circle at 36% 30%,#fff,var(--pink) 62%);
+      box-shadow:0 0 56px 14px rgba(255,45,149,.65)}}
   /* the flash is softened from the mockup — a full-white frame is harsh at night */
   .stage.on .flash{animation:pl_flash 5.4s linear forwards}
   @keyframes pl_flash{0%,34%{opacity:0;transform:scale(.3)}
@@ -930,56 +959,59 @@ APP_HTML = """<!doctype html>
     52%{opacity:.7;transform:rotate(560deg)}100%{opacity:.85;transform:rotate(700deg)}}
   .stage.on .prog{animation:pl_prog 5.4s linear forwards}
   @keyframes pl_prog{0%{opacity:0}5%{opacity:.7}
-    93%{opacity:.5;background:conic-gradient(rgba(143,212,255,.5) 360deg,transparent 360deg)}
-    100%{opacity:0;background:conic-gradient(rgba(143,212,255,.5) 360deg,transparent 360deg)}}
+    93%{opacity:.5;background:conic-gradient(rgba(0,229,255,.6) 360deg,transparent 360deg)}
+    100%{opacity:0;background:conic-gradient(rgba(0,229,255,.6) 360deg,transparent 360deg)}}
   /* closing: the open form contracts away, then the closed diamond fades back */
   .stage.closing .pi{animation:pl_collapse .8s cubic-bezier(.22,.9,.28,1) forwards}
   @keyframes pl_collapse{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(.84)}}
-  .connect{width:100%;margin-top:34px;background:var(--card);border:1px solid rgba(224,165,90,.2);border-radius:16px;padding:18px}
-  .connect h2{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--amber-bright);text-transform:uppercase;margin-bottom:8px}
-  .connect p{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px}
-  .connect p b{color:var(--ink)}
-  .urlbox{background:rgba(0,0,0,.4);border:1px solid rgba(224,165,90,.18);border-radius:10px;padding:11px 12px;
-          font-family:var(--mono);font-size:11px;color:var(--amber-bright);word-break:break-all;line-height:1.5}
-  .copybtn{margin-top:10px;width:100%;height:44px;border:none;border-radius:11px;background:var(--amber);color:#1a0f00;
-           font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:1px;text-transform:uppercase;cursor:pointer}
+  /* cyan tube, so it never competes with the pink primary action */
   .setupbtn{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;margin-top:34px;
-            height:52px;border-radius:14px;text-decoration:none;background:rgba(224,165,90,.1);
-            border:1px solid rgba(224,165,90,.4);color:var(--amber-bright);
+            height:52px;border-radius:26px;text-decoration:none;background:rgba(0,229,255,.08);
+            border:1.5px solid var(--cyan);color:#EAFBFF;text-shadow:0 0 10px rgba(0,229,255,.8);
+            box-shadow:0 0 20px rgba(0,229,255,.35),inset 0 0 18px rgba(0,229,255,.14);
             font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:1.5px;text-transform:uppercase}
   /* social sign-in — rendered only when the provider is actually configured */
   .or{display:flex;align-items:center;gap:10px;margin:18px 0 14px;color:var(--faint);
       font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase}
-  .or:before,.or:after{content:"";flex:1;height:1px;background:rgba(150,140,120,.2)}
+  .or:before,.or:after{content:"";flex:1;height:1px;background:rgba(183,157,208,.22)}
   .social{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:50px;
-          border-radius:12px;text-decoration:none;font-size:15px;font-weight:600;margin-bottom:10px}
-  .social.google{background:#F4F1EA;color:#1A1A1A}
-  .social.apple{background:transparent;color:var(--ink);border:1px solid rgba(244,241,234,.5)}
+          border-radius:13px;text-decoration:none;font-size:15px;font-weight:600;margin-bottom:10px}
+  .social.google{background:#F6E9FF;color:#1A1024}
+  .social.apple{background:rgba(255,255,255,.04);color:var(--ink);border:1px solid rgba(246,233,255,.42)}
   .social:active{transform:scale(.98)}
-  .modal{position:fixed;inset:0;background:rgba(0,0,0,.78);display:none;
-         align-items:center;justify-content:center;padding:28px;z-index:50}
+  .modal{position:fixed;inset:0;background:rgba(6,3,14,.82);display:none;
+         align-items:center;justify-content:center;padding:28px;z-index:50;
+         backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
   .modal.show{display:flex}
-  .modal .box{background:var(--card);border:1px solid rgba(224,165,90,.3);border-radius:18px;
+  .modal .box{background:var(--card);border:1px solid var(--edge);border-radius:20px;
+              backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
+              box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 46px rgba(255,45,149,.18);
               padding:24px;max-width:340px;text-align:center;animation:fadeUp .35s ease-out}
   .modal h3{font-size:18px;margin-bottom:10px}
   .modal p{color:var(--muted);font-size:14px;line-height:1.55}
-  .modal button{margin-top:20px;width:100%;height:46px;border:none;border-radius:12px;
-                background:var(--amber);color:#1a0f00;font-family:var(--mono);font-weight:700;
+  .modal button{margin-top:20px;width:100%;height:46px;border:1.5px solid var(--pink);border-radius:13px;
+                background:rgba(255,45,149,.12);color:#FFE9F5;font-family:var(--mono);font-weight:700;
+                text-shadow:0 0 10px rgba(255,45,149,.9);box-shadow:0 0 18px rgba(255,45,149,.4);
                 font-size:12px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer}
-  .modal button.ghost{margin-top:10px;background:transparent;color:var(--muted);
-                border:1px solid rgba(150,140,120,.3)}
-  .seeall{display:block;margin-top:12px;text-align:center;text-decoration:none;
+  .modal button.ghost{margin-top:10px;background:transparent;color:var(--muted);text-shadow:none;
+                box-shadow:none;border:1px solid rgba(183,157,208,.3)}
+  .seeall{display:block;margin-top:14px;text-align:center;text-decoration:none;
           font-family:var(--mono);font-size:11px;letter-spacing:1.5px;
-          color:var(--amber-bright);text-transform:uppercase}
-  .ritem{text-decoration:none;color:inherit}
-  .ritem .go{color:var(--amber);font-size:17px}
+          color:var(--cyan-soft);text-transform:uppercase;text-shadow:0 0 12px rgba(0,229,255,.6)}
   .recent{width:100%;margin-top:30px}
   .recent h2{font-family:var(--mono);font-size:10.5px;letter-spacing:2px;color:var(--faint);text-transform:uppercase;margin-bottom:10px}
-  .ritem{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(150,140,120,.12)}
-  .ritem .rth{width:34px;height:48px;border-radius:5px;object-fit:cover;background:rgba(224,165,90,.1);flex-shrink:0}
+  .ritem{display:flex;align-items:center;gap:12px;padding:10px 0;text-decoration:none;color:inherit;
+         border-bottom:1px solid rgba(0,229,255,.16)}
+  .ritem .go{color:var(--cyan);font-size:17px;text-shadow:0 0 10px rgba(0,229,255,.8)}
+  .ritem .rth{width:34px;height:48px;border-radius:5px;object-fit:cover;background:rgba(123,45,255,.25);flex-shrink:0}
   .ritem .rmain{flex:1;min-width:0}
   .ritem .rt{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ritem .rm{font-family:var(--mono);font-size:10px;color:var(--muted)}
+  .ritem .rm{font-family:var(--mono);font-size:10px;color:var(--cyan-soft)}
+  /* The lens is a 5.4s light show; anyone who asked the OS for less motion
+     gets the resting prism and no sequence at all. */
+  @media (prefers-reduced-motion:reduce){
+    .stage.on *,.stage.closing *{animation:none !important}
+  }
 </style>
 </head>
 <body>
@@ -1182,48 +1214,66 @@ SHORTCUT_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="No Clu">
+<meta name="theme-color" content="#0A0614">
 <link rel="apple-touch-icon" href="/app-icon.png">
 <link rel="icon" href="/app-icon.png">
 <title>Set up one-tap scanning · No Clú</title>
 <style>
+  /* Neon night — see APP_HTML for the full rationale. */
   :root{
-    --bg:#000; --card:#0D0B08; --ink:#F4F1EA; --muted:#9a8f7d; --faint:#6a6152;
-    --amber:#E0A55A; --amber-bright:#F2C784;
+    --bg:#0A0614; --ink:#F6E9FF; --muted:#B79DD0; --faint:#7B6B94;
+    --card:rgba(28,13,50,.62);
+    --pink:#FF2D95; --pink-soft:#FF9AC9; --cyan:#00E5FF; --cyan-soft:#9BE7FF; --violet:#7B2DFF;
+    --edge:rgba(255,45,149,.30); --edge-cyan:rgba(0,229,255,.26);
     --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
     --sans: -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-  body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100dvh;
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100dvh;position:relative;
        padding:calc(env(safe-area-inset-top) + 18px) 22px calc(env(safe-area-inset-bottom) + 40px);
        -webkit-font-smoothing:antialiased;max-width:520px;margin:0 auto}
-  a.back{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--muted);text-decoration:none}
-  .brand{font-family:var(--mono);font-weight:700;letter-spacing:3px;color:var(--amber);
-         text-shadow:0 0 14px rgba(224,165,90,.5);font-size:15px;margin:18px 0 4px}
+  body:before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(46% 26% at 16% 8%, rgba(255,45,149,.5), transparent 66%),
+      radial-gradient(42% 24% at 88% 34%, rgba(0,229,255,.3), transparent 64%),
+      radial-gradient(60% 32% at 44% 102%, rgba(123,45,255,.42), transparent 66%)}
+  body>*{position:relative;z-index:1}
+  a.back{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--cyan-soft);text-decoration:none}
+  .brand{font-family:var(--mono);font-weight:700;letter-spacing:3px;color:#FFF;
+         text-shadow:0 0 1px #fff,0 0 8px var(--pink),0 0 22px var(--pink);font-size:15px;margin:18px 0 4px}
   h1{font-size:25px;line-height:1.25;margin-top:8px}
   .sub{color:var(--muted);font-size:14px;line-height:1.55;margin-top:10px}
-  .step{background:var(--card);border:1px solid rgba(224,165,90,.2);border-radius:16px;padding:18px;margin-top:18px}
-  .step .n{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--amber-bright);text-transform:uppercase}
+  .step{background:var(--card);border:1px solid var(--edge);border-radius:18px;padding:18px;margin-top:18px;
+        backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);
+        box-shadow:0 14px 44px rgba(0,0,0,.5),0 0 34px rgba(255,45,149,.12)}
+  /* the step number is the one place numbering is honest — this is a real sequence */
+  .step .n{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--pink-soft);text-transform:uppercase;
+           text-shadow:0 0 12px rgba(255,45,149,.7)}
   .step h2{font-size:17px;margin-top:6px}
   .step p{color:var(--muted);font-size:13.5px;line-height:1.55;margin-top:8px}
   .step p b{color:var(--ink)}
-  .urlbox{background:rgba(0,0,0,.45);border:1px solid rgba(224,165,90,.18);border-radius:10px;padding:11px 12px;
-          font-family:var(--mono);font-size:11px;color:var(--amber-bright);word-break:break-all;line-height:1.5;margin-top:12px}
+  .urlbox{background:rgba(10,6,20,.6);border:1px solid var(--edge-cyan);border-radius:11px;padding:11px 12px;
+          font-family:var(--mono);font-size:11px;color:var(--cyan-soft);word-break:break-all;line-height:1.5;margin-top:12px}
   .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:50px;margin-top:12px;
-       border:none;border-radius:12px;background:var(--amber);color:#1a0f00;cursor:pointer;text-decoration:none;
-       font-family:var(--mono);font-weight:700;font-size:12.5px;letter-spacing:1px;text-transform:uppercase}
-  .btn.ghost{background:rgba(224,165,90,.1);border:1px solid rgba(224,165,90,.4);color:var(--amber-bright)}
+       border:1.5px solid var(--pink);border-radius:13px;background:rgba(255,45,149,.12);color:#FFE9F5;
+       cursor:pointer;text-decoration:none;text-shadow:0 0 10px rgba(255,45,149,.9);
+       box-shadow:0 0 20px rgba(255,45,149,.45),inset 0 0 18px rgba(255,45,149,.16);
+       font-family:var(--mono);font-weight:700;font-size:12.5px;letter-spacing:1.5px;text-transform:uppercase}
+  .btn.ghost{background:rgba(0,229,255,.08);border-color:var(--cyan);color:#EAFBFF;
+       text-shadow:0 0 10px rgba(0,229,255,.8);box-shadow:0 0 18px rgba(0,229,255,.32)}
   ol.manual{margin:12px 0 0 18px;color:var(--muted);font-size:13.5px;line-height:1.7}
   ol.manual b{color:var(--ink)}
-  .trigger{padding:13px 0;border-bottom:1px solid rgba(150,140,120,.13)}
+  .trigger{padding:13px 0;border-bottom:1px solid rgba(0,229,255,.16)}
   .trigger:last-child{border-bottom:none}
   .tname{font-size:14.5px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .tbadge{font-family:var(--mono);font-size:9.5px;letter-spacing:1px;text-transform:uppercase;
-          padding:3px 7px;border-radius:20px;border:1px solid rgba(150,140,120,.35);color:var(--faint)}
-  .tbadge.best{border-color:rgba(224,165,90,.5);color:var(--amber-bright);background:rgba(224,165,90,.08)}
+          padding:3px 7px;border-radius:20px;border:1px solid rgba(183,157,208,.35);color:var(--faint)}
+  .tbadge.best{border-color:var(--cyan);color:#EAFBFF;background:rgba(0,229,255,.1);
+          box-shadow:0 0 14px rgba(0,229,255,.35)}
   .tsteps{color:var(--muted);font-size:13px;line-height:1.55;margin-top:6px}
   .tsteps b{color:var(--ink)}
   .note{display:block;color:var(--faint);font-size:12px;margin-top:6px;line-height:1.5}
-  code{font-family:var(--mono);font-size:12px;background:rgba(224,165,90,.12);color:var(--amber-bright);
+  code{font-family:var(--mono);font-size:12px;background:rgba(0,229,255,.12);color:var(--cyan-soft);
        padding:2px 6px;border-radius:5px;word-break:break-all}
   #need,#setup{display:none}
   #need.show,#setup.show{display:block}
@@ -1334,28 +1384,37 @@ HISTORY_HTML = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0A0614">
 <link rel="apple-touch-icon" href="/app-icon.png">
 <link rel="icon" href="/app-icon.png">
 <title>Your scan history · No Clú</title>
 <style>
-  :root{--bg:#000;--card:#0D0B08;--ink:#F4F1EA;--muted:#9a8f7d;--faint:#6a6152;
-        --amber:#E0A55A;--amber-bright:#F2C784;
+  /* Neon night — see APP_HTML for the full rationale. */
+  :root{--bg:#0A0614;--ink:#F6E9FF;--muted:#B79DD0;--faint:#7B6B94;
+        --pink:#FF2D95;--pink-soft:#FF9AC9;--cyan:#00E5FF;--cyan-soft:#9BE7FF;--violet:#7B2DFF;
         --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
         --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-  body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100dvh;
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100dvh;position:relative;
        padding:calc(env(safe-area-inset-top) + 18px) 22px calc(env(safe-area-inset-bottom) + 40px);
        -webkit-font-smoothing:antialiased;max-width:560px;margin:0 auto}
-  a.back{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--muted);text-decoration:none}
-  h1{font-size:24px;margin:18px 0 4px}
-  .sub{color:var(--muted);font-size:13.5px;margin-bottom:18px}
+  body:before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(46% 26% at 16% 8%, rgba(255,45,149,.5), transparent 66%),
+      radial-gradient(42% 24% at 88% 34%, rgba(0,229,255,.3), transparent 64%),
+      radial-gradient(60% 32% at 44% 102%, rgba(123,45,255,.42), transparent 66%)}
+  body>*{position:relative;z-index:1}
+  a.back{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--cyan-soft);text-decoration:none}
+  h1{font-size:24px;margin:18px 0 4px;text-shadow:0 0 20px rgba(255,45,149,.45)}
+  .sub{color:var(--cyan-soft);font-family:var(--mono);font-size:11px;letter-spacing:1.5px;
+       text-transform:uppercase;margin-bottom:18px;font-variant-numeric:tabular-nums}
   .row{display:flex;align-items:center;gap:13px;padding:11px 0;text-decoration:none;color:inherit;
-       border-bottom:1px solid rgba(150,140,120,.12)}
-  .row .th{width:42px;height:60px;border-radius:6px;object-fit:cover;background:rgba(224,165,90,.1);flex-shrink:0}
+       border-bottom:1px solid rgba(0,229,255,.16)}
+  .row .th{width:42px;height:60px;border-radius:6px;object-fit:cover;background:rgba(123,45,255,.25);flex-shrink:0}
   .row .main{flex:1;min-width:0}
   .row .t{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .row .m{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:3px}
-  .row .go{color:var(--amber);font-size:18px}
+  .row .go{color:var(--cyan);font-size:18px;text-shadow:0 0 10px rgba(0,229,255,.8)}
   .empty{color:var(--faint);font-size:14px;text-align:center;padding:50px 0}
 </style>
 </head>
@@ -1409,46 +1468,63 @@ TITLE_HTML = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0A0614">
 <link rel="apple-touch-icon" href="/app-icon.png">
 <link rel="icon" href="/app-icon.png">
 <title>No Clú</title>
 <style>
-  :root{--bg:#000;--card:#0D0B08;--ink:#F4F1EA;--muted:#9a8f7d;--faint:#6a6152;
-        --amber:#E0A55A;--amber-bright:#F2C784;
+  /* Neon night — see APP_HTML for the full rationale. */
+  :root{--bg:#0A0614;--ink:#F6E9FF;--muted:#B79DD0;--faint:#7B6B94;
+        --pink:#FF2D95;--pink-soft:#FF9AC9;--cyan:#00E5FF;--cyan-soft:#9BE7FF;--violet:#7B2DFF;
+        --edge-cyan:rgba(0,229,255,.26);
         --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
         --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-  body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100dvh;
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100dvh;position:relative;
        padding:calc(env(safe-area-inset-top) + 18px) 22px calc(env(safe-area-inset-bottom) + 40px);
        -webkit-font-smoothing:antialiased;max-width:520px;margin:0 auto}
-  a.back{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--muted);text-decoration:none}
-  .cover{width:100%;border-radius:16px;margin-top:16px;display:none;
-         border:1px solid rgba(224,165,90,.18)}
-  h1{font-size:27px;line-height:1.2;margin-top:18px}
-  .meta{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--muted);
-        margin-top:8px;text-transform:uppercase}
-  .detail{color:#cbb89a;font-size:14.5px;line-height:1.55;margin-top:14px}
+  body:before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(46% 26% at 16% 8%, rgba(255,45,149,.5), transparent 66%),
+      radial-gradient(42% 24% at 88% 34%, rgba(0,229,255,.3), transparent 64%),
+      radial-gradient(60% 32% at 44% 102%, rgba(123,45,255,.42), transparent 66%)}
+  body>*{position:relative;z-index:1}
+  a.back{font-family:var(--mono);font-size:12px;letter-spacing:1px;color:var(--cyan-soft);text-decoration:none}
+  /* the cover art is the brightest thing on the page — give it a lit edge */
+  .cover{width:100%;border-radius:18px;margin-top:16px;display:none;
+         border:1px solid rgba(255,45,149,.4);box-shadow:0 18px 50px rgba(0,0,0,.6),0 0 38px rgba(255,45,149,.28)}
+  h1{font-size:27px;line-height:1.2;margin-top:18px;text-shadow:0 0 24px rgba(255,45,149,.45)}
+  .meta{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--cyan-soft);
+        margin-top:8px;text-transform:uppercase;text-shadow:0 0 12px rgba(0,229,255,.5)}
+  .detail{color:var(--muted);font-size:14.5px;line-height:1.55;margin-top:14px}
   .label{font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;color:var(--faint);
          text-transform:uppercase;margin-top:26px}
   .chips{display:flex;flex-wrap:wrap;gap:9px;margin-top:11px}
   .chips a{font-family:var(--mono);font-size:11.5px;letter-spacing:.5px;text-decoration:none;
-           padding:10px 14px;border-radius:22px;border:1px solid rgba(224,165,90,.35);
-           color:var(--amber-bright);background:rgba(224,165,90,.07)}
+           padding:10px 14px;border-radius:22px;border:1px solid var(--edge-cyan);
+           color:#EAFBFF;background:rgba(0,229,255,.08);
+           box-shadow:0 0 14px rgba(0,229,255,.22),inset 0 0 12px rgba(0,229,255,.1)}
   .grp{margin-top:16px}
   .glabel{font-family:var(--mono);font-size:10px;letter-spacing:1px;color:var(--muted);text-transform:uppercase}
   .grp .chips{margin-top:8px}
   .nowhere{color:var(--faint);font-size:13.5px;line-height:1.5;margin-top:18px}
-  /* Primary action: one tap straight to the best place to watch. */
+  /* Primary action: one tap straight to the best place to watch. It is the only
+     filled control in the whole app — everything else is an outlined tube, so
+     this reads as the brightest sign on the street. */
   .primary-action{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:22px;
-       text-decoration:none;height:52px;border-radius:12px;background:var(--amber);color:#1A0F00;
+       text-decoration:none;height:54px;border-radius:27px;color:#fff;
+       background:linear-gradient(120deg,var(--pink),var(--violet));
        font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;
-       box-shadow:0 0 24px rgba(224,165,90,.4);transition:transform .15s}
+       box-shadow:0 0 34px rgba(255,45,149,.6),0 8px 26px rgba(0,0,0,.5);transition:transform .15s}
   .primary-action:active{transform:scale(.97)}
-  .cta.secondary{background:transparent;border:1px solid rgba(224,165,90,.35);color:var(--amber-bright);
-       height:46px;font-size:12px}
   .cta{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:16px;
-       text-decoration:none;height:52px;border-radius:13px;background:var(--amber);color:#1a0f00;
+       text-decoration:none;height:52px;border-radius:26px;background:rgba(255,45,149,.12);
+       border:1.5px solid var(--pink);color:#FFE9F5;text-shadow:0 0 10px rgba(255,45,149,.9);
+       box-shadow:0 0 20px rgba(255,45,149,.42),inset 0 0 18px rgba(255,45,149,.16);
        font-family:var(--mono);font-weight:700;font-size:12.5px;letter-spacing:1.5px;text-transform:uppercase}
+  /* demoted when a primary action already exists above it */
+  .cta.secondary{background:rgba(0,229,255,.07);border-color:var(--edge-cyan);color:var(--cyan-soft);
+       text-shadow:none;box-shadow:none;height:46px;font-size:12px}
   .msg{color:var(--faint);font-size:14px;text-align:center;padding:60px 0}
 </style>
 </head>
@@ -1461,7 +1537,7 @@ TITLE_HTML = """<!doctype html>
     <div class="meta" id="meta"></div>
     <div class="detail" id="detail"></div>
     <a class="primary-action" id="primaryAction" target="_blank" rel="noopener" style="display:none">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 2l9 5-9 5V2z" fill="#1A0F00"></path></svg>
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 2l9 5-9 5V2z" fill="#FFFFFF"></path></svg>
       <span id="primaryLabel"></span>
     </a>
     <div class="label" id="label" style="display:none"></div>
