@@ -135,6 +135,9 @@ def _extra_providers() -> List[Dict[str, str]]:
             "base": "https://models.inference.ai.azure.com",
             "key": GITHUB_MODELS_TOKEN,
             "model": GITHUB_MODELS_MODEL,
+            # A frontier model: the escalation target, and the only extra
+            # trusted to overrule Gemini when both are equally sure.
+            "strength": STRENGTH_FRONTIER,
         })
     if GROQ_API_KEY:
         configured.append({
@@ -142,6 +145,9 @@ def _extra_providers() -> List[Dict[str, str]]:
             "base": "https://api.groq.com/openai/v1",
             "key": GROQ_API_KEY,
             "model": GROQ_MODEL,
+            # Backstop, not an authority. Large free quota, weaker judgement —
+            # it answers when nothing better could, and never wins a tie.
+            "strength": STRENGTH_BACKSTOP,
         })
     if MISTRAL_API_KEY:
         configured.append({
@@ -149,6 +155,7 @@ def _extra_providers() -> List[Dict[str, str]]:
             "base": "https://api.mistral.ai/v1",
             "key": MISTRAL_API_KEY,
             "model": MISTRAL_MODEL,
+            "strength": STRENGTH_BACKSTOP,
         })
     return configured
 
@@ -730,6 +737,15 @@ async def _gemini_once(model: str, parts: List[dict]) -> ScreenContent:
 
 CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 
+# How far a model's judgement is trusted when two answers are equally confident.
+# Position in the chain is about SPEED, not authority, so strength is declared
+# separately: the chain ends with a high-volume backstop, which must never
+# outrank the frontier model that ran before it.
+STRENGTH_BACKSTOP = 0     # large free quota, weaker judgement
+STRENGTH_FAST = 1         # the everyday model
+STRENGTH_STRONG = 2       # the better model in the same family
+STRENGTH_FRONTIER = 3     # escalation target
+
 # A model that just reported "out of quota" will almost certainly say the same
 # on the next scan, so re-asking wastes a round trip on EVERY subsequent scan.
 # Five minutes is a deliberate middle: long enough that a daily-exhausted model
@@ -764,9 +780,13 @@ async def _best_of(attempts) -> ScreenContent:
     Games" for Jawaani Jaaneman, which stopped the chain before it ever reached
     GPT-4o.
 
-    Ties go to the LATER attempt. The chain is ordered fastest-first, so later
-    means stronger, and a stronger model agreeing at the same confidence is the
-    better answer to keep.
+    Ties go to the STRONGER model, which is not the same as the later one — a
+    mistake that cost a working answer. The chain runs fast-then-fallback, so
+    the last entry is Groq, a high-volume backstop, not an authority. Letting
+    position decide ties handed Crew from GPT-4o's correct "Crew" to Groq's
+    confident "The Buckingham Murders" — a different Kareena Kapoor film, i.e.
+    exactly the actor-over-extension this whole design exists to stop. Strength
+    is therefore declared per attempt and compared explicitly.
 
     Two different failures land here and both degrade rather than break: a model
     being out of quota (skipped, and remembered so it is not re-asked), and a
@@ -774,7 +794,8 @@ async def _best_of(attempts) -> ScreenContent:
     answered at all raises.
     """
     best: Optional[ScreenContent] = None
-    for label, attempt in attempts:
+    best_score = None
+    for label, strength, attempt in attempts:
         if _on_cooldown(label):
             continue
         try:
@@ -782,9 +803,11 @@ async def _best_of(attempts) -> ScreenContent:
         except ModelUnavailable:
             _model_cooldown[label] = time.monotonic() + MODEL_COOLDOWN_SECONDS
             continue   # out of quota, withdrawn, or a bad key on an optional extra
-        if best is None or CONFIDENCE_RANK.get(result.confidence, 0) >= \
-                           CONFIDENCE_RANK.get(best.confidence, 0):
-            best = result
+        # Confidence first, model strength only as the tie-break: a weaker model
+        # being surer of itself does not make it right.
+        score = (CONFIDENCE_RANK.get(result.confidence, 0), strength)
+        if best_score is None or score > best_score:
+            best, best_score = result, score
         if best.confidence == "high":
             return best    # read off the screen — nothing to gain from asking again
     if best is not None:
@@ -812,7 +835,9 @@ async def identify_gemini(frames: List[str],
     if not GEMINI_API_KEY:
         raise ProviderError("⚠️ No Clú: Gemini key missing — add GEMINI_API_KEY")
     parts = _gemini_parts(frames, audio)
-    return await _best_of([(m, partial(_gemini_once, m, parts)) for m in GEMINI_MODELS])
+    return await _best_of([
+        (m, STRENGTH_FAST if i == 0 else STRENGTH_STRONG, partial(_gemini_once, m, parts))
+        for i, m in enumerate(GEMINI_MODELS)])
 
 
 # --- Anthropic (paid) --------------------------------------------------------
@@ -928,8 +953,11 @@ async def identify_content(frames: List[str],
     attempts = []
     if GEMINI_API_KEY:
         parts = _gemini_parts(frames, audio)
-        attempts += [(m, partial(_gemini_once, m, parts)) for m in GEMINI_MODELS]
-    attempts += [(p["label"], partial(_openai_compatible_once, p, frames)) for p in extras]
+        attempts += [
+            (m, STRENGTH_FAST if i == 0 else STRENGTH_STRONG, partial(_gemini_once, m, parts))
+            for i, m in enumerate(GEMINI_MODELS)]
+    attempts += [(p["label"], p["strength"], partial(_openai_compatible_once, p, frames))
+                 for p in extras]
     return await _best_of(attempts)
 
 
@@ -2553,6 +2581,7 @@ async def identify(request: Request, country: Optional[str] = None):
         "episode": content.episode,
         "confidence": content.confidence,
         "detail": content.detail,
+        "evidence": content.evidence,
         "country": resolved_country,
         # NOTE: `watch` here is TMDB's RAW dict (plain provider-name strings),
         # which /demo renders. /api/title's `watch` is the grouped, linked shape
