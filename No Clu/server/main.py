@@ -2769,7 +2769,13 @@ async def scan_text(request: Request, country: Optional[str] = None, token: Opti
         return "🔍 Couldn't read that screen — try again."
     daily_cap.record()  # only count successful recognitions against the free quota
 
-    watch = await tmdb_where_to_watch(content, resolved_country)
+    # Independent lookups, run together. These used to be sequential, and the
+    # poster was fetched INSIDE the save block — so a back-tap scan waited for
+    # two round trips one after the other on the slowest path in the product.
+    watch, poster = await asyncio.gather(
+        tmdb_where_to_watch(content, resolved_country),
+        fetch_poster(content),
+    )
 
     # Save to the account that owns this token, so back-tap scans sync to the app.
     # Best-effort: a history-write failure must never break the notification.
@@ -2780,11 +2786,16 @@ async def scan_text(request: Request, country: Optional[str] = None, token: Opti
             try:
                 user = db.get_user_by_scan_token(session, token)
                 if user:
-                    poster = await fetch_poster(content)
+                    # confidence and evidence were being dropped here while
+                    # /identify stored them, so the "Best guess" badge never
+                    # appeared on back-tap scans — the ones most likely to be
+                    # uncertain, and the only ones most users ever make.
                     saved = db.add_scan(session, user.id, title=content.title,
                                         content_type=content.content_type, year=content.year,
                                         poster=poster, detail=content.detail,
-                                        season=content.season, episode=content.episode)
+                                        season=content.season, episode=content.episode,
+                                        confidence=content.confidence,
+                                        evidence=content.evidence)
                     saved_id = saved.id
             finally:
                 session.close()
