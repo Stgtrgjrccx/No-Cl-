@@ -922,9 +922,13 @@ async def _openai_compatible_once(provider: Dict[str, str],
     """One attempt against any OpenAI-compatible vision endpoint.
 
     Images only — none of these free tiers accept the audio clip Gemini can
-    take, so a scan that reaches here is judged on the picture alone. Frames are
-    capped at two: GitHub Models allows just 8K input tokens and images are
-    expensive, so sending five would fail the request outright.
+    take, so a scan that reaches here is judged on the picture alone.
+
+    ONE frame, not the five Gemini gets. Images dominate the token bill on these
+    tiers and the budgets are small: GitHub Models allows 8K input tokens per
+    request, and Groq's free tier caps at 8,000 tokens PER MINUTE across every
+    request — a second frame roughly doubles that for a still Reel where the
+    extra moment adds almost nothing.
 
     Raises ModelUnavailable on 429/404/5xx so the caller falls through, matching
     _gemini_once. Auth failures also fall through rather than killing the scan —
@@ -940,7 +944,7 @@ async def _openai_compatible_once(provider: Dict[str, str],
                 [{"type": "text", "text": IDENTIFY_PROMPT}] +
                 [{"type": "image_url",
                   "image_url": {"url": f"data:image/jpeg;base64,{f}"}}
-                 for f in frames[:2]]
+                 for f in frames[:1]]
             ),
         }],
     }
