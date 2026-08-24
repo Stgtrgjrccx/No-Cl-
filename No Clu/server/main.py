@@ -2740,7 +2740,8 @@ async def _read_uploaded_media(request: Request) -> Dict[str, object]:
 
 
 @app.post("/scan", response_class=PlainTextResponse)
-async def scan_text(request: Request, country: Optional[str] = None, token: Optional[str] = None):
+async def scan_text(request: Request, country: Optional[str] = None,
+                    token: Optional[str] = None, reply: Optional[str] = None):
     """Plain-text sibling of /identify for the iOS Shortcut.
 
     Returns a ready-to-show string (title + where-to-watch link) so the
@@ -2808,7 +2809,18 @@ async def scan_text(request: Request, country: Optional[str] = None, token: Opti
         lines.append(f"▶ Where to watch in {resolved_country}: {jw}")
     # Last line, and deliberately the LAST url in the reply: the Shortcut grabs
     # the final URL and opens it, landing the user on this exact scan in the app.
+    app_link = None
     if saved_id is not None:
         base = str(request.base_url).rstrip("/")
-        lines.append(f"{SCAN_APP_LINK_LABEL}: {base}/title/{saved_id}")
+        app_link = f"{base}/title/{saved_id}"
+        lines.append(f"{SCAN_APP_LINK_LABEL}: {app_link}")
+
+    # reply=link returns the bare URL and nothing else, so a Shortcut can pipe
+    # this straight into "Open URLs". The default reply is a human-readable
+    # summary containing several URLs, which forces the Shortcut to add
+    # "Get URLs from Input" and "Get Last Item" to dig the right one out —
+    # three fragile actions whose chaining broke the moment one was edited.
+    # One action that cannot be mis-wired beats three that can.
+    if reply == "link":
+        return app_link or ""
     return "\n".join(lines)
