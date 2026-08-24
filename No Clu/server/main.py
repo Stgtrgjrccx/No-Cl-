@@ -1241,6 +1241,9 @@ DEMO_HTML = """<!doctype html>
   .notif .time { color: #6a6a80; font-size: 12px; margin-top: 12px; }
   .spin { text-align: center; color: #b8b8cc; margin-top: 20px; display: none; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/studio-freight/lenis@1.0.29/bundled/lenis.min.js"></script>
 </head>
 <body>
   <div class="wrap">
@@ -1350,6 +1353,7 @@ async def demo():
 
 # --- Mobile home-screen app (Add to Home Screen -> real app icon) -------------
 APP_HTML = """<!doctype html>
+<!-- UI: Premium Dark Mode & GSAP Onboarding Overhaul -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -1579,6 +1583,9 @@ APP_HTML = """<!doctype html>
     .stage.on *,.stage.closing *{animation:none !important}
   }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/studio-freight/lenis@1.0.29/bundled/lenis.min.js"></script>
 </head>
 <body>
   <!-- Sign-in gate -->
@@ -1845,6 +1852,9 @@ SHORTCUT_HTML = """<!doctype html>
   #need.show,#setup.show{display:block}
   #need{text-align:center;padding-top:60px}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/studio-freight/lenis@1.0.29/bundled/lenis.min.js"></script>
 </head>
 <body>
   <a class="back" href="/app">← Back to app</a>
@@ -1983,6 +1993,9 @@ HISTORY_HTML = """<!doctype html>
   .row .go{color:var(--cyan);font-size:18px;text-shadow:0 0 10px rgba(0,229,255,.8)}
   .empty{color:var(--faint);font-size:14px;text-align:center;padding:50px 0}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/studio-freight/lenis@1.0.29/bundled/lenis.min.js"></script>
 </head>
 <body>
   <a class="back" href="/app">← Back to app</a>
@@ -2101,6 +2114,9 @@ TITLE_HTML = """<!doctype html>
        text-shadow:none;box-shadow:none;height:46px;font-size:12px}
   .msg{color:var(--faint);font-size:14px;text-align:center;padding:60px 0}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/studio-freight/lenis@1.0.29/bundled/lenis.min.js"></script>
 </head>
 <body>
   <a class="back" href="/history">← Back to history</a>
