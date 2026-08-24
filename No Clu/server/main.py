@@ -824,53 +824,52 @@ def _on_cooldown(label: str) -> bool:
 
 
 async def _best_of(attempts) -> ScreenContent:
-    """Walk (label, attempt) pairs in order, stopping at the first sure answer.
-
-    Shared by the Gemini-only chain and the full cross-provider chain so the two
-    can never drift apart.
-
-    Only "high" stops the walk. "High" means the title was read off the screen
-    or the scene was unmistakable; anything less is inference, and inference is
-    exactly what a stronger model should be asked to check. This was measured:
-    across the real failing screenshots and a 12-run repeat, every wrong answer
-    that survived the anti-guessing rules was a "medium" — including "Sacred
-    Games" for Jawaani Jaaneman, which stopped the chain before it ever reached
-    GPT-4o.
-
-    Ties go to the STRONGER model, which is not the same as the later one — a
-    mistake that cost a working answer. The chain runs fast-then-fallback, so
-    the last entry is Groq, a high-volume backstop, not an authority. Letting
-    position decide ties handed Crew from GPT-4o's correct "Crew" to Groq's
-    confident "The Buckingham Murders" — a different Kareena Kapoor film, i.e.
-    exactly the actor-over-extension this whole design exists to stop. Strength
-    is therefore declared per attempt and compared explicitly.
-
-    Two different failures land here and both degrade rather than break: a model
-    being out of quota (skipped, and remembered so it is not re-asked), and a
-    model being unsure (kept, but keep looking). Only a chain where nothing
-    answered at all raises.
+    """Run attempts concurrently and return the first sure answer, or best overall.
+    
+    This brute-forces the 5-second limit by firing all available models at once
+    instead of waiting for them sequentially.
     """
-    best: Optional[ScreenContent] = None
-    best_score = None
+    pending = []
     for label, strength, attempt in attempts:
         if _on_cooldown(label):
             continue
-        try:
-            result = await attempt()
-        except ModelUnavailable as exc:
-            _model_cooldown[label] = time.monotonic() + MODEL_COOLDOWN_SECONDS
-            _provider_last_error[label] = str(exc)
-            continue   # out of quota, withdrawn, or a bad key on an optional extra
-        # Confidence first, model strength only as the tie-break: a weaker model
-        # being surer of itself does not make it right.
-        result = result.model_copy(update={"source": label})
-        score = (CONFIDENCE_RANK.get(result.confidence, 0), strength)
+            
+        async def run(lbl=label, st=strength, att=attempt):
+            try:
+                res = await att()
+                return (lbl, st, res)
+            except ModelUnavailable as exc:
+                _model_cooldown[lbl] = time.monotonic() + MODEL_COOLDOWN_SECONDS
+                _provider_last_error[lbl] = str(exc)
+                return None
+            except Exception:
+                return None
+                
+        pending.append(asyncio.create_task(run()))
+
+    if not pending:
+        raise ProviderError("⚠️ No Clú: hit the free daily limit — try again after midnight!")
+
+    best: Optional[ScreenContent] = None
+    best_score = None
+    
+    for task in asyncio.as_completed(pending):
+        result = await task
+        if result is None:
+            continue
+        lbl, st, res = result
+        res = res.model_copy(update={"source": lbl})
+        score = (CONFIDENCE_RANK.get(res.confidence, 0), st)
         if best_score is None or score > best_score:
-            best, best_score = result, score
+            best, best_score = res, score
         if best.confidence == "high":
-            return best    # read off the screen — nothing to gain from asking again
+            # read off the screen — nothing to gain from waiting for others
+            for p in pending:
+                p.cancel()
+            return best
+            
     if best is not None:
-        return best        # nobody was certain; the best of them still beats nothing
+        return best
     raise ProviderError("⚠️ No Clú: hit the free daily limit — try again after midnight!")
 
 
@@ -1891,7 +1890,8 @@ SHORTCUT_HTML = """<!doctype html>
         <ol class="manual">
           <li>Open the <b>Shortcuts</b> app → <b>+</b> to create a new one.</li>
           <li>Add action <b>Take Screenshot</b>.</li>
-          <li>Add action <b>Get Contents of URL</b>. Set URL to your copied link, tap <b>Show More</b>: Method <b>POST</b>, Request Body <b>File</b>, and choose the <b>Screenshot</b> variable.</li>
+          <li>Add action <b>Resize Image</b> (set to width 1080) and <b>Convert Image</b> (to JPEG).</li>
+          <li>Add action <b>Get Contents of URL</b>. Set URL to your copied link, tap <b>Show More</b>: Method <b>POST</b>, Request Body <b>File</b>, and choose the <b>Converted Image</b> variable.</li>
           <li>Add action <b>Show Alert</b>. Set the message to the <b>Contents of URL</b> variable, and change the OK button text to <b>Open in No Clú</b>.</li>
           <li>Add action <b>Get URLs from Input</b> (input = <b>Contents of URL</b>), then <b>Get Last Item from List</b>, then <b>Open URLs</b>.</li>
           <li>Name it <b>No Clú</b>.</li>
